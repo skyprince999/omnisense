@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trip Distance Viewer v6 — Orb Left / Video Center / Controls Right</title>
+<style>
+  :root {
+    color-scheme: dark;
+    /* v6: orb & sidebar share this width so the video centers. clamp() keeps the wide-screen
+       look on desktop but shrinks the side columns on narrower laptops (e.g. a MacBook)
+       so the video never gets squeezed to a sliver. */
+    --side: clamp(300px, 28vw, 500px);
+    /* surface system: lift panels off the near-black page with subtle 1px dividers */
+    --bg: #060608;          /* page / gutters (darkest) */
+    --surface: #121216;     /* navigation, orb, video panes */
+    --surface-2: #1a1a20;   /* raised surface: the video controls bar */
+    --border: #262630;      /* 1px divider */
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: #e8eaed;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    /* normalize font weight/smoothing so Mac text isn't rendered heavier than Windows */
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    display: flex; height: 100vh; overflow: hidden;
+    /* v6: center the whole row so the (fixed-width) video column lands in the viewport centre */
+    justify-content: center;
+    gap: 18px; padding: 16px;
+  }
+
+  /* ---- COLUMN ORDER (v6): orb left · video middle · trips+controls right ---- */
+  /* Only the visual order changes; JS references elements by id, so nothing else moves. */
+  #orbcol { order: 1; }
+  main    { order: 2; }
+  aside   { order: 3; }
+
+  /* ---- video player (width set in JS to kill letterbox black) ---- */
+  main {
+    flex: none; min-width: 0;
+    display: flex; flex-direction: column;
+  }
+  h1 { font-size: 14px; font-weight: 600; margin-bottom: 6px; letter-spacing: .2px;
+       flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  h1 span { color: #8a919b; font-weight: 400; }
+  .viewer { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .stack { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+  .pane {
+    position: relative; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    flex: 1; min-height: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  /* v5: video inset to 90% so a ~5% black margin frames it on every side */
+  .pane video { display: block; width: 90%; height: 90%; object-fit: contain; }
+  .pane canvas.overlay { position: absolute; pointer-events: none; }
+  .tag {
+    position: absolute; top: 10px; left: 10px;
+    background: rgba(0,0,0,.55); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+    padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; letter-spacing: .4px; text-transform: uppercase; color: #d6d9de; z-index: 2;
+  }
+  .count {
+    position: absolute; top: 10px; right: 10px;
+    background: rgba(0,0,0,.55); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+    padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; letter-spacing: .3px; color: #d6d9de;
+    font-variant-numeric: tabular-nums; z-index: 2;
+  }
+  .count b.veh { color: #7ee07e; }
+  .count b.per { color: #ffb14a; }
+  .count b.ani { color: #5aabff; }
+  .nearest {
+    position: absolute; bottom: 10px; left: 10px;
+    background: rgba(0,0,0,.6); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+    padding: 4px 12px; border-radius: 999px;
+    font-size: 13px; color: #d6d9de; font-variant-numeric: tabular-nums; z-index: 2;
+  }
+  .nearest b { font-weight: 700; }
+  .banner {
+    position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+    background: rgba(120,20,20,.85); border: 1px solid #ff6b6b;
+    color: #ffdede; padding: 5px 16px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; letter-spacing: .3px;
+    display: none; z-index: 3; box-shadow: 0 0 18px rgba(255,60,60,.35);
+  }
+  .slicechip {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,.55); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+    padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; color: #d6d9de; font-variant-numeric: tabular-nums;
+    display: none; z-index: 3;
+  }
+  .slicechip .chip { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+  /* Two rows: seek/rail on top (always full width), transport buttons below. This stops
+     the seek bar from collapsing when the video column is narrow (e.g. a Mac laptop). */
+  .controls {
+    flex: none; display: flex; flex-direction: column; gap: 9px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 12px; margin-top: 8px;
+  }
+  .ctrlrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .ctrlspacer { flex: 1 1 auto; min-width: 0; }   /* pushes the toggles to the right */
+  /* Play/pause drawn in CSS (not a unicode/emoji glyph) so it looks the same on every OS. */
+  button#play {
+    position: relative; width: 38px; height: 38px; border: 0; border-radius: 50%;
+    background: #e8eaed; cursor: pointer; flex: none; font-size: 0; padding: 0;
+  }
+  button#play:hover { background: #fff; }
+  button#play::before {   /* play triangle (paused state) */
+    content: ""; position: absolute; top: 50%; left: 54%; transform: translate(-50%,-50%);
+    width: 0; height: 0; border-style: solid;
+    border-width: 8px 0 8px 13px; border-color: transparent transparent transparent #0d0f12;
+  }
+  button#play.playing::before {   /* two bars (playing state) */
+    left: 50%; width: 13px; height: 14px; border: 0;
+    background:
+      linear-gradient(#0d0f12,#0d0f12) left  / 4px 100% no-repeat,
+      linear-gradient(#0d0f12,#0d0f12) right / 4px 100% no-repeat;
+  }
+  button#nudgeBtn {
+    border: 1px solid #5e492f; background: #3a2a18; color: #ffd9b0;
+    border-radius: 8px; padding: 6px 11px; font-size: 13px; cursor: pointer;
+    flex: none; white-space: nowrap;
+  }
+  button#nudgeBtn::before {   /* small CSS triangle instead of a ▶ emoji glyph */
+    content: ""; display: inline-block; vertical-align: middle; margin: -2px 6px 0 0;
+    width: 0; height: 0; border-style: solid;
+    border-width: 5px 0 5px 8px; border-color: transparent transparent transparent #ffd9b0;
+  }
+  button#nudgeBtn:hover { background: #4a3620; }
+  button#nudgeBtn:disabled { opacity: .4; cursor: default; }
+
+  .seekwrap { width: 100%; display: flex; flex-direction: column; gap: 5px; }
+  /* Fully custom range so Safari's native slider matches Chrome/Windows exactly. */
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 6px; margin: 0; cursor: pointer; background: transparent; outline: none;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 6px; background: #2a2f37; border-radius: 999px;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; margin-top: -4px;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #ff8c42; border: 2px solid #1a1a20; box-shadow: 0 1px 3px rgba(0,0,0,.5);
+  }
+  input[type=range]::-moz-range-track { height: 6px; background: #2a2f37; border-radius: 999px; }
+  input[type=range]::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #ff8c42; border: 2px solid #1a1a20;
+  }
+  .rail {
+    position: relative; height: 9px; border-radius: 4px; overflow: hidden;
+    background: #22262d;
+  }
+  .rail .seg { position: absolute; top: 0; height: 100%; border-right: 1px solid #0d0f12; }
+  .rail .seg.green { background: #2e6b3e; }
+  .rail .seg.amber { background: #9a6a1e; }
+  .rail .seg.red   { background: #8a2f2f; }
+  .rail .seg.active { filter: brightness(1.7); box-shadow: 0 0 0 1px #e8eaed inset; }
+  .rail .seg.nudge::after {
+    content: "\1F50A"; position: absolute; top: -1px; left: 1px; font-size: 8px; line-height: 11px;
+  }
+
+  .time { font-variant-numeric: tabular-nums; color: #aeb4bd; min-width: 96px; text-align: center; flex: none; }
+  /* Custom select: Safari renders native <select> very differently — normalize it. */
+  select {
+    -webkit-appearance: none; appearance: none; font: inherit;
+    background-color: #22262d; color: #e8eaed; border: 1px solid #333a44;
+    border-radius: 6px; padding: 5px 26px 5px 8px; cursor: pointer; flex: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23aeb4bd' stroke-width='1.5'/></svg>");
+    background-repeat: no-repeat; background-position: right 8px center;
+  }
+  label.chk { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; color: #c4c9d1; flex: none; }
+  label.chk input { accent-color: #ff8c42; cursor: pointer; }
+
+  /* ---- COLUMN 2: trips + segments ---- */
+  aside {
+    width: var(--side); flex: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    display: flex; flex-direction: column;
+    padding: 12px 10px;
+  }
+  aside h2 {
+    font-size: 12px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase;
+    color: #8a919b; padding: 2px 6px 6px;
+  }
+  #trips { flex: none; display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+  .trip {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 10px; border-radius: 8px; cursor: pointer; user-select: none;
+    color: #c4c9d1; border: 1px solid transparent;
+  }
+  .trip:hover { background: #1b1f26; }
+  .trip.active { background: #22303e; border-color: #33495e; color: #e8eaed; }
+  .trip .n {
+    background: #22262d; color: #8a919b; border-radius: 999px;
+    font-size: 11px; padding: 0 8px; font-variant-numeric: tabular-nums;
+  }
+  .trip.active .n { background: #2c3f52; color: #aecbe8; }
+  #segs { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  #segs::-webkit-scrollbar { width: 8px; }
+  #segs::-webkit-scrollbar-thumb { background: #2a2f37; border-radius: 4px; }
+  .seg {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 10px; border-radius: 7px; cursor: pointer; user-select: none;
+    color: #aeb4bd; font-size: 13px; border: 1px solid transparent;
+    font-variant-numeric: tabular-nums;
+  }
+  .seg .lbl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dot {
+    flex: none; width: 9px; height: 9px; border-radius: 50%;
+    background: #3a3f47; box-shadow: 0 0 0 1px rgba(0,0,0,.4) inset;
+  }
+  .dot.red   { background: #ff5a5a; box-shadow: 0 0 6px rgba(255,90,90,.5); }
+  .dot.amber { background: #ffb14a; box-shadow: 0 0 6px rgba(255,177,74,.45); }
+  .dot.green { background: #7ee07e; box-shadow: 0 0 6px rgba(126,224,126,.45); }
+  .hint .dot { display: inline-block; vertical-align: middle; margin: -1px 2px 0 6px; }
+  .seg:hover { background: #1b1f26; }
+  .seg.active { background: #3a2a18; border-color: #5e492f; color: #ffd9b0; }
+  .subhead {
+    font-size: 11px; letter-spacing: .6px; text-transform: uppercase;
+    color: #6b727c; padding: 8px 6px 3px;
+  }
+  .hint { flex: none; color: #6b727c; font-size: 11px; padding: 8px 6px 0; line-height: 1.55; }
+  .hint b { color: #8a919b; font-weight: 600; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: middle; margin: -1px 3px 0 6px; }
+
+  /* ---- COLUMN 3: voice-reactive cloud orb ---- */
+  #orbcol {
+    flex: none; width: var(--side); position: relative;   /* v6: fixed width == sidebar, so video centers */
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #orb { display: block; width: 100%; height: 100%; }
+  .orbtag {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 7px;
+    font-size: 11px; letter-spacing: .6px; text-transform: uppercase; color: #7f8794;
+    z-index: 2;
+  }
+  .orbtag .live {
+    width: 7px; height: 7px; border-radius: 50%; background: #3a3f47;
+    transition: background .2s, box-shadow .2s;
+  }
+  .orbtag.speaking .live { background: #7ee0ff; box-shadow: 0 0 8px rgba(126,224,255,.8); }
+  .orbcap {
+    position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+    width: min(86%, 460px);
+    background: rgba(14,16,20,.82); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    border: 1px solid #33495e; border-left-width: 4px;
+    border-radius: 12px; padding: 11px 15px 12px;
+    box-shadow: 0 10px 34px rgba(0,0,0,.6);
+    opacity: 0; transform: translateX(-50%) translateY(8px);
+    transition: opacity .35s, transform .35s; pointer-events: none; z-index: 2;
+  }
+  .orbcap.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .orbcap .hd {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; letter-spacing: .5px; text-transform: uppercase; color: #aeb4bd;
+    margin-bottom: 5px;
+  }
+  .orbcap .spk { font-size: 15px; line-height: 1.1; }
+  .orbcap.playing .spk { animation: pulse 1s ease-in-out infinite; }
+  .orbcap .sig { font-weight: 700; letter-spacing: .4px; }
+  .orbcap .body { font-size: 13px; color: #e8eaed; line-height: 1.5; }
+
+  .err {
+    position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%);
+    max-width: 760px; color: #ff9d9d;
+    background: #2a1616; border: 1px solid #5a2a2a; border-radius: 8px;
+    padding: 10px 14px; display: none; text-align: center; z-index: 10;
+  }
+  .err code { background: #3a1e1e; padding: 1px 6px; border-radius: 4px; color: #ffc4c4; }
+</style>
+</head>
+<body>
+
+  <!-- COLUMN 1: videos -->
+  <main>
+    <h1 id="title">Trip Distance Viewer <span>v6</span></h1>
+    <div class="viewer">
+      <div class="stack">
+        <div class="pane">
+          <span class="tag">Original + Distance</span>
+          <span class="count" id="count"></span>
+          <span class="slicechip" id="slicechip"></span>
+          <video id="orig" preload="auto" muted playsinline></video>
+          <canvas class="overlay" id="ovOrig"></canvas>
+          <span class="nearest" id="nearest"></span>
+          <div class="banner" id="banner"></div>
+        </div>
+        <div class="pane">
+          <span class="tag">Depth + Distance</span>
+          <video id="depth" preload="auto" muted playsinline></video>
+          <canvas class="overlay" id="ovDepth"></canvas>
+        </div>
+      </div>
+      <div class="controls">
+        <!-- Row 1: full-width seek bar + slice rail (never gets squeezed by the buttons) -->
+        <div class="seekwrap">
+          <input type="range" id="seek" min="0" max="1000" value="0">
+          <div class="rail" id="rail" title="Driving-quality slices"></div>
+        </div>
+        <!-- Row 2: transport controls; wraps if the column is very narrow -->
+        <div class="ctrlrow">
+          <button id="play" title="Play/pause (space)"></button>
+          <span class="time" id="time">0:00 / 0:00</span>
+          <button id="nudgeBtn" title="Jump to the flagged slice and play its nudge (v)">Nudge</button>
+          <span class="ctrlspacer"></span>
+          <label class="chk" title="Toggle bounding boxes (b)"><input type="checkbox" id="boxes" checked> Boxes</label>
+          <label class="chk" title="Toggle distance labels (d)"><input type="checkbox" id="dists" checked> Distance</label>
+          <select id="speed" title="Playback speed">
+            <option value="0.5">0.5&times;</option>
+            <option value="1" selected>1&times;</option>
+            <option value="1.5">1.5&times;</option>
+            <option value="2">2&times;</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- COLUMN 2: trip / segment picker -->
+  <aside>
+    <h2>Trips</h2>
+    <div id="trips"></div>
+    <h2>Segments</h2>
+    <div id="segs"></div>
+    <div class="hint">
+      Proximity (gap to bumper):
+      <span class="swatch" style="background:#7ee07e"></span><b>safe</b>
+      <span class="swatch" style="background:#ffb14a"></span><b>close</b>
+      <span class="swatch" style="background:#ff5a5a"></span><b>very close</b><br>
+      Clip dot: <span class="dot red"></span><b>red</b> any red slice ·
+      <span class="dot amber"></span><b>amber</b> &gt;10% amber ·
+      <span class="dot green"></span><b>green</b> else.<br>
+      <b>space</b> play · <b>&larr;/&rarr;</b> 5s · <b>v</b> nudge ·
+      <b>n/p</b> seg · <b>b</b> boxes · <b>d</b> dist
+    </div>
+  </aside>
+
+  <!-- COLUMN 3: voice-reactive cloud orb (driven by the nudge voiceover) -->
+  <section id="orbcol">
+    <div class="orbtag" id="orbtag"><span class="live"></span> Coaching voice</div>
+    <canvas id="orb"></canvas>
+    <div class="orbcap" id="orbcap">
+      <div class="hd"><span class="spk">&#128266;</span> Voiceover nudge &middot;
+        <span class="sig" id="capSig"></span></div>
+      <div class="body" id="capBody"></div>
+    </div>
+  </section>
+
+  <!-- per-slice coaching voiceover; src set dynamically to nudges/<coaching_audio>; videos stay muted -->
+  <audio id="nudge" preload="auto"></audio>
+
+  <div class="err" id="err"></div>
+
+<script>
+  // Files follow the convention:
+  //   stitched/<stem>.mp4  ·  depth/<stem>.depth.mp4  ·  tracks/<stem>.tracks.json
+  //   distances/<stem>.distances.json  ·  slices/<stem>.slices.v5.json
+  // Serve over HTTP (fetch() blocked on file://):  python serve.py
+  //   then open  http://localhost:8000/trip_dist_viewer_v6.html
+  //
+  // v6 = v5 with the columns reordered (orb left · video middle · trips+controls right)
+  // via CSS `order`; the logic is identical to v5. The orb in
+  // column 3 is the cloud_orb.html shader, wired to the <audio id="nudge"> element via
+  // the Web Audio API: it billows/breathes with the coaching voiceover and idles otherwise.
+
+  // Cache-buster for the stitched/ videos; see where orig.src is set.
+  const VIDEO_V = "web1";
+
+  const TRIPS = [
+    { name: "Pimpri Underpass",  prefix: "Car Dashcam" },
+    { name: "Bhandardara Trip",  prefix: "Good videos" },
+    { name: "Nagar Highway",     prefix: "Nagar highway trip" },
+    { name: "Nigdi to Yerwada",  prefix: "Nigdi to Yerwada" },
+    { name: "Pune to Velhe",     prefix: "Pune to Velhe" },
+    { name: "VN to PIC Pashan",  prefix: "VN to PIC Pashan" },
+  ];
+
+  const GAP_NEAR = 3.0, GAP_MID = 8.0;
+  const TTC_CAUTION = 2.5, TTC_NEARMISS = 1.5, TTC_FRAME_WIN = 15;
+  const AUDIO_FALLBACK_DUR = 12.8;
+  const AMBER_FRAC = 0.10;
+
+  const orig = document.getElementById("orig");
+  const depth = document.getElementById("depth");
+  const ovOrig = document.getElementById("ovOrig");
+  const ovDepth = document.getElementById("ovDepth");
+  const playBtn = document.getElementById("play");
+  const nudgeBtn = document.getElementById("nudgeBtn");
+  const seek = document.getElementById("seek");
+  const timeEl = document.getElementById("time");
+  const speedEl = document.getElementById("speed");
+  const boxesEl = document.getElementById("boxes");
+  const distsEl = document.getElementById("dists");
+  const countEl = document.getElementById("count");
+  const nearestEl = document.getElementById("nearest");
+  const bannerEl = document.getElementById("banner");
+  const errEl = document.getElementById("err");
+  const tripsEl = document.getElementById("trips");
+  const segsEl = document.getElementById("segs");
+  const railEl = document.getElementById("rail");
+  const slicechipEl = document.getElementById("slicechip");
+  const capSig = document.getElementById("capSig");
+  const capBody = document.getElementById("capBody");
+  const nudge = document.getElementById("nudge");
+  const stackEl = document.querySelector(".stack");
+  const viewerEl = document.querySelector(".viewer");
+  const mainEl = document.querySelector("main");
+  const orbtagEl = document.getElementById("orbtag");
+  const orbcapEl = document.getElementById("orbcap");
+
+  const PERSON = "#ffb14a", VEHICLE = "#7ee07e", ANIMAL = "#5aabff";
+  const ANIMAL_IDS = new Set([15, 16, 17, 18, 19]);
+  const classColor = cls => (cls === 0 ? PERSON : ANIMAL_IDS.has(cls) ? ANIMAL : VEHICLE);
+  const SIG_COLOR = { green: "#7ee07e", amber: "#ffb14a", red: "#ff5a5a" };
+
+  function gapColor(gap) {
+    if (gap == null) return null;
+    if (gap < GAP_NEAR) return "#ff5a5a";
+    if (gap < GAP_MID)  return "#ffb14a";
+    return "#7ee07e";
+  }
+
+  let box = null, boxKind = null, dist = null, distByFrame = null;
+  let curTrip = null, curStem = null, signals = {};
+  const dpr = window.devicePixelRatio || 1;
+
+  let slicesArr = [], sliceTotal = 0, sliceSegEls = [];
+  let nudgeSlices = [], firstNudge = null, curNudge = null, audioDur = AUDIO_FALLBACK_DUR;
+  // Queue model: a clip, once started, always plays to its end. Entering a voiced slice
+  // enqueues that slice; if a clip is already playing, the new one waits its turn.
+  let nudgeQueue = [];              // slices waiting to be spoken, in arrival order
+  let armedSlices = new Set();      // slices already enqueued this pass (prevents re-fire per frame)
+
+  let curAR = 16 / 9;   // video aspect ratio, refined from metadata; drives layout sizing
+
+  function showErr(html) { errEl.style.display = "block"; errEl.innerHTML = html; }
+  function clearErr() { errEl.style.display = "none"; }
+
+  nudge.addEventListener("loadedmetadata", () => {
+    if (isFinite(nudge.duration) && nudge.duration > 0) audioDur = nudge.duration;
+  });
+
+  // --- video column sizing: pick a width so panes match the video AR exactly ---
+  // Each pane is half the (fixed) stack height; setting the column width to
+  // paneHeight*AR makes object-fit:contain fill the pane with no black bars.
+  function layoutVideos() {
+    const stackH = stackEl.clientHeight;
+    if (stackH <= 0) return;
+    const gap = 6;
+    const paneH = (stackH - gap) / 2;
+    // Measure the actual rendered side-column widths (this resolves clamp() to px, which
+    // getComputedStyle on the custom property does NOT), then reserve body padding + gutters.
+    const asideW = (document.querySelector("aside") || {}).offsetWidth || 0;
+    const orbW = (document.getElementById("orbcol") || {}).offsetWidth || 0;
+    const maxW = window.innerWidth - asideW - orbW - 32 - 36;
+    const w = Math.max(240, Math.min(paneH * curAR, maxW));
+    viewerEl.style.width = w + "px";
+  }
+  window.addEventListener("resize", layoutVideos);
+  orig.addEventListener("loadedmetadata", () => {
+    if (orig.videoWidth && orig.videoHeight) {
+      curAR = orig.videoWidth / orig.videoHeight;
+      layoutVideos();
+    }
+  });
+
+  // --- boot ---------------------------------------------------------------
+  async function loadManifest() {
+    try {
+      // no-cache, not no-store: revalidate so a newly finished video shows up,
+      // but still allow a 304 instead of re-sending the whole body.
+      const r = await fetch("detections/manifest.json", { cache: "no-cache" });
+      if (!r.ok) throw new Error(r.status);
+      const j = await r.json();
+      return (j.videos && j.videos.length) ? j.videos : [];
+    } catch (e) { return null; }
+  }
+
+  function segLabel(stem, multiRun) {
+    const pm = stem.match(/\(part (\d+) of (\d+)\)\s*\[\+(\d+h\d+m)\]/i);
+    const tm = stem.match(/\[(\d{4}-\d{2}-\d{2}) (\d{4})-(\d{4})\]/);
+    if (pm) {
+      let label = `Part ${pm[1]} of ${pm[2]}  ·  +${pm[3]}`;
+      if (multiRun && tm) label = `${tm[2]}h  ·  ` + label;
+      return label;
+    }
+    if (tm) return `${tm[1]}  ·  ${tm[2]}–${tm[3]}`;
+    return stem;
+  }
+
+  function aggregateSignal(slices) {
+    if (!slices || !slices.length) return null;
+    let amber = 0, red = 0;
+    for (const s of slices) {
+      const sig = (s.driving_signal || "green").toLowerCase();
+      if (sig === "red") red++;
+      else if (sig === "amber") amber++;
+    }
+    if (red > 0) return "red";
+    if (amber / slices.length > AMBER_FRAC) return "amber";
+    return "green";
+  }
+
+  // Boot fires one of these per video. Firing all of them at once queues them
+  // behind the browser's 6-connections-per-host cap, and over a slow link the
+  // ones at the back of the queue time out; a pool keeps each request's own
+  // deadline realistic.
+  async function computeSignals(stems, poolSize = 6) {
+    const out = {};
+    let next = 0;
+    async function worker() {
+      while (next < stems.length) {
+        const stem = stems[next++];
+        const d = await fetchJSON("slices/" + encodeURIComponent(stem) + ".slices.v5.json");
+        out[stem] = aggregateSignal(d && d.slices);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(poolSize, stems.length) }, worker));
+    return out;
+  }
+
+  (async function boot() {
+    const videos = await loadManifest();
+    if (videos === null) {
+      showErr("Could not read <code>detections/manifest.json</code>. " +
+        "Serve the folder over HTTP first: run <code>python serve.py</code> " +
+        "in the project root, then open <code>http://localhost:8000/trip_dist_viewer_v4.html</code>.");
+      return;
+    }
+    if (!videos.length) {
+      showErr("No detections found. Run <code>make_detections.py</code> first.");
+      return;
+    }
+    signals = await computeSignals(videos);
+
+    for (const t of TRIPS) {
+      t.segs = videos
+        .filter(v => v.startsWith(t.prefix))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      t.multiRun = new Set(t.segs.filter(s => /\(part \d+/i.test(s)).map(s => {
+        const m = s.match(/\[(\d{4}-\d{2}-\d{2} \d{4})/); return m ? m[1] : "";
+      })).size > 1;
+    }
+    const unmatched = videos.filter(v => !TRIPS.some(t => v.startsWith(t.prefix)));
+    if (unmatched.length) {
+      TRIPS.push({ name: "Other", prefix: "", segs: unmatched, multiRun: false });
+    }
+
+    renderTrips();
+    layoutVideos();
+
+    const want = new URLSearchParams(location.search).get("video");
+    const owner = want && TRIPS.find(t => t.segs.includes(want));
+    if (owner) selectTrip(owner, want);
+    else selectTrip(TRIPS.find(t => t.segs.length) || TRIPS[0]);
+  })();
+
+  // --- sidebar ------------------------------------------------------------
+  function renderTrips() {
+    tripsEl.innerHTML = "";
+    for (const t of TRIPS) {
+      if (!t.segs.length) continue;
+      const el = document.createElement("div");
+      el.className = "trip";
+      el.innerHTML = `<span>${t.name}</span><span class="n">${t.segs.length}</span>`;
+      el.addEventListener("click", () => selectTrip(t));
+      t.el = el;
+      tripsEl.appendChild(el);
+    }
+  }
+
+  function selectTrip(trip, stem) {
+    curTrip = trip;
+    for (const t of TRIPS) t.el && t.el.classList.toggle("active", t === trip);
+    segsEl.innerHTML = "";
+    let lastRun = null;
+    for (const s of trip.segs) {
+      if (trip.multiRun) {
+        const m = s.match(/\[(\d{4}-\d{2}-\d{2}) (\d{4})-(\d{4})\]/);
+        const run = m ? `${m[1]}  ${m[2]}–${m[3]}` : "";
+        if (run && run !== lastRun) {
+          const h = document.createElement("div");
+          h.className = "subhead";
+          h.textContent = run;
+          segsEl.appendChild(h);
+          lastRun = run;
+        }
+      }
+      const el = document.createElement("div");
+      el.className = "seg";
+      const dot = document.createElement("span");
+      dot.className = "dot" + (signals[s] ? " " + signals[s] : "");
+      dot.title = { red: "bad driving", amber: "okay driving", green: "good driving" }[signals[s]] || "no signal";
+      const lbl = document.createElement("span");
+      lbl.className = "lbl";
+      lbl.textContent = segLabel(s, trip.multiRun);
+      el.append(lbl, dot);
+      el.title = s;
+      el.addEventListener("click", () => selectSegment(s));
+      el.dataset.stem = s;
+      segsEl.appendChild(el);
+    }
+    selectSegment(stem || trip.segs[0]);
+  }
+
+  // --- segment loading ----------------------------------------------------
+  // Retries because over a tunnel a request can time out transiently, and a null
+  // return is indistinguishable from "no data" downstream — a dropped slices
+  // fetch silently costs that trip its status badge. 404 is a real answer, so
+  // it is not retried. Per-stem JSON never changes for a given stem, so the
+  // default HTTP cache is left on; only the manifest revalidates.
+  async function fetchJSON(url, tries = 3) {
+    for (let i = 0; i < tries; i++) {
+      try {
+        const r = await fetch(url);
+        if (r.status === 404) return null;
+        if (!r.ok) throw new Error(r.status);
+        return await r.json();
+      } catch (e) {
+        if (i === tries - 1) return null;
+        await new Promise(res => setTimeout(res, 400 * (i + 1)));
+      }
+    }
+    return null;
+  }
+
+  function indexDistances(d) {
+    const m = new Map();
+    if (!d || !d.frames) return m;
+    d.frames.forEach((boxes, i) => {
+      const inner = new Map();
+      for (const [tid, cls, z, gap, conf] of boxes) inner.set(tid, { z, gap, conf });
+      m.set(i, inner);
+    });
+    return m;
+  }
+
+  function coachingText(analysis) {
+    if (!analysis) return "";
+    let t = analysis;
+    let m = analysis.match(/3\)[\s*]*Coaching[^\n]*\n/i) || analysis.match(/Coaching[^\n]*\n/i);
+    if (m) t = analysis.slice(m.index + m[0].length);
+    const cleaned = t
+      .split(/\r?\n/)
+      .map(l => l.replace(/[*#>_`]+/g, "").replace(/^\s*[-•]\s*/, "").trim())
+      .filter(Boolean)
+      .join("  ")
+      .replace(/\s{2,}/g, "  ")
+      .trim();
+    const out = cleaned || analysis.replace(/[*#>_`]+/g, " ").replace(/\s{2,}/g, " ").trim();
+    return out.length > 300 ? out.slice(0, 297).trimEnd() + "…" : out;
+  }
+
+  function loadSlices(data) {
+    slicesArr = (data && data.slices ? data.slices.slice() : []).sort((a, b) => a.start - b.start);
+    orbcapEl.classList.remove("show", "playing");
+    slicechipEl.style.display = "none";
+    railEl.innerHTML = "";
+    sliceSegEls = [];
+    nudge.pause();
+    curNudge = null;
+    nudgeQueue = [];                 // new segment: nothing carries over
+    armedSlices = new Set();
+    // every amber/red slice that has a generated coaching_audio is its own nudge
+    nudgeSlices = slicesArr.filter(s => (s.coaching_audio || "").trim());
+    firstNudge = nudgeSlices[0] || null;
+    nudgeBtn.disabled = !firstNudge;
+    if (!slicesArr.length) return;
+    sliceTotal = slicesArr[slicesArr.length - 1].end || orig.duration || 120;
+    renderSliceRail();
+  }
+
+  function renderSliceRail() {
+    sliceSegEls = slicesArr.map(s => {
+      const el = document.createElement("div");
+      const sig = s.driving_signal || "green";
+      el.className = "seg " + sig + (s.coaching_audio ? " nudge" : "");
+      el.style.left  = (s.start / sliceTotal * 100) + "%";
+      el.style.width = ((s.end - s.start) / sliceTotal * 100) + "%";
+      el.title = sig + "  ·  " + s.start.toFixed(0) + "–" + s.end.toFixed(0) + "s" +
+        (s.coaching_audio ? "  (voiced)" : "");
+      el.addEventListener("click", () => { orig.currentTime = s.start; });
+      railEl.appendChild(el);
+      return el;
+    });
+  }
+
+  function sliceAt(t) {
+    for (const s of slicesArr) if (t >= s.start && t < s.end) return s;
+    return slicesArr.length ? slicesArr[slicesArr.length - 1] : null;
+  }
+
+  async function selectSegment(stem, autoplay) {
+    if (!stem) return;
+    clearErr();
+    curStem = stem;
+    nudge.pause();
+    for (const el of segsEl.querySelectorAll(".seg")) {
+      const on = el.dataset.stem === stem;
+      el.classList.toggle("active", on);
+      if (on) el.scrollIntoView({ block: "nearest" });
+    }
+
+    // ?v= busts Cloudflare's edge copy of the pre-transcode 1080p sources, which
+    // it holds for 4h. Bump VIDEO_V after re-running make_web_videos.py.
+    // Only the stitched/ side is versioned — depth/ files were not re-encoded.
+    orig.src = "stitched/" + encodeURIComponent(stem) + ".mp4?v=" + VIDEO_V;
+    depth.src = "depth/" + encodeURIComponent(stem) + ".depth.mp4";
+    document.querySelector("#title span").textContent =
+      "— " + (curTrip ? curTrip.name + "  ·  " : "") + segLabel(stem, curTrip && curTrip.multiRun);
+    history.replaceState(null, "", "?video=" + encodeURIComponent(stem));
+
+    box = dist = distByFrame = null; boxKind = null;
+
+    const enc = encodeURIComponent(stem);
+    const [tracks, dst, sl] = await Promise.all([
+      fetchJSON("tracks/" + enc + ".tracks.json"),
+      fetchJSON("distances/" + enc + ".distances.json"),
+      fetchJSON("slices/" + enc + ".slices.v5.json"),
+    ]);
+    if (tracks) { box = tracks; boxKind = "tracks"; }
+    else {
+      const det = await fetchJSON("detections/" + enc + ".detections.json");
+      if (det) { box = det; boxKind = "detections"; }
+    }
+    if (!box) { showErr("Could not read tracks or detections JSON for this segment."); }
+
+    dist = dst;
+    distByFrame = indexDistances(dst);
+    if (box && boxKind === "tracks" && !dst) {
+      showErr("No distances for this segment — run <code>make_distances.py</code>. " +
+        "Boxes still show without gaps.");
+    }
+    loadSlices(sl);
+    if (autoplay) { orig.play(); depth.play(); }
+  }
+
+  orig.addEventListener("error", () => { if (orig.src) showErr(
+    "Could not load the original video for this segment. Check <code>stitched/</code>."); });
+  depth.addEventListener("error", () => { if (depth.src) showErr(
+    "Depth video missing for this segment — run <code>make_depth_video.py</code>. Boxes still work on the original."); });
+
+  orig.addEventListener("ended", () => {
+    const next = neighborStem(+1);
+    if (next) selectSegment(next, true);
+  });
+
+  function neighborStem(dir) {
+    if (!curTrip) return null;
+    const i = curTrip.segs.indexOf(curStem);
+    const j = i + dir;
+    return (i >= 0 && j >= 0 && j < curTrip.segs.length) ? curTrip.segs[j] : null;
+  }
+
+  // --- box + gap/TTC lookup ----------------------------------------------
+  function objectsAtTime(t) {
+    if (!box || !box.frames || !box.frames.length) return { idx: 0, objs: [] };
+    const stride = box.stride || 1;
+    let idx = Math.round((t * box.fps) / stride);
+    if (idx < 0) idx = 0;
+    if (idx >= box.frames.length) idx = box.frames.length - 1;
+
+    const raw = box.frames[idx] || [];
+    const distRow = distByFrame ? distByFrame.get(idx) : null;
+    const objs = [];
+    for (const b of raw) {
+      let tid = null, cls, conf, x1, y1, x2, y2;
+      if (boxKind === "tracks") { [tid, cls, conf, x1, y1, x2, y2] = b; }
+      else { [cls, conf, x1, y1, x2, y2] = b; }
+      const dd = (distRow && tid != null) ? distRow.get(tid) : null;
+      let ttcNow = null;
+      if (tid != null && dist && dist.tracks) {
+        const s = dist.tracks[String(tid)];
+        if (s && s.min_ttc_s != null && s.ttc_frame != null &&
+            Math.abs(idx - s.ttc_frame) <= TTC_FRAME_WIN) ttcNow = s.min_ttc_s;
+      }
+      objs.push({
+        cls, conf, x1, y1, x2, y2, tid,
+        gap: dd ? dd.gap : null, z: dd ? dd.z : null, ttc: ttcNow,
+      });
+    }
+    return { idx, objs };
+  }
+
+  function drawOverlay(canvas, video, pane, objs) {
+    const vr = video.getBoundingClientRect();
+    const pr = pane.getBoundingClientRect();
+    const w = vr.width, h = vr.height;
+    canvas.style.left = (vr.left - pr.left) + "px";
+    canvas.style.top = (vr.top - pr.top) + "px";
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+    const cw = Math.max(1, Math.round(w * dpr)), ch = Math.max(1, Math.round(h * dpr));
+    if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (!boxesEl.checked || !objs.length) return;
+
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.textBaseline = "bottom";
+    const showDist = distsEl.checked;
+    for (const o of objs) {
+      const px = o.x1 * w, py = o.y1 * h, pw = (o.x2 - o.x1) * w, ph = (o.y2 - o.y1) * h;
+      const gc = gapColor(o.gap);
+      const col = (showDist && gc) ? gc : classColor(o.cls);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = (o.ttc != null && o.ttc < TTC_NEARMISS) ? 3.5 : 2;
+      ctx.strokeRect(px, py, pw, ph);
+
+      const name = (box.classes && box.classes[String(o.cls)]) || String(o.cls);
+      let label = name;
+      if (showDist && o.gap != null) label += "  " + o.gap.toFixed(1) + "m";
+      else label += " " + o.conf.toFixed(2);
+      if (showDist && o.ttc != null && o.ttc < TTC_CAUTION) label += "  ⚠" + o.ttc.toFixed(1) + "s";
+
+      const tw = ctx.measureText(label).width + 8;
+      const ly = py > 16 ? py : py + ph + 16;
+      ctx.fillStyle = col;
+      ctx.fillRect(px, ly - 15, tw, 15);
+      ctx.fillStyle = "#0d0f12";
+      ctx.fillText(label, px + 4, ly - 2);
+    }
+  }
+
+  function updateHud(objs) {
+    if (!box) { countEl.textContent = ""; nearestEl.textContent = ""; bannerEl.style.display = "none"; return; }
+    let veh = 0, per = 0, ani = 0;
+    let nearGap = Infinity, nearName = null;
+    let worstTtc = Infinity, worstName = null;
+    for (const o of objs) {
+      if (o.cls === 0) per++;
+      else if (ANIMAL_IDS.has(o.cls)) ani++;
+      else veh++;
+      if (o.gap != null && o.gap < nearGap) {
+        nearGap = o.gap;
+        nearName = (box.classes && box.classes[String(o.cls)]) || String(o.cls);
+      }
+      if (o.ttc != null && o.ttc < worstTtc) {
+        worstTtc = o.ttc;
+        worstName = (box.classes && box.classes[String(o.cls)]) || String(o.cls);
+      }
+    }
+    countEl.innerHTML =
+      '<b class="veh">' + veh + '</b> vehicles &nbsp; ' +
+      '<b class="per">' + per + '</b> persons &nbsp; ' +
+      '<b class="ani">' + ani + '</b> animals';
+
+    if (nearName && isFinite(nearGap)) {
+      const c = gapColor(nearGap) || "#d6d9de";
+      nearestEl.innerHTML = 'Nearest: <b style="color:' + c + '">' +
+        nearGap.toFixed(1) + ' m</b> &nbsp;<span style="color:#8a919b">' + nearName + '</span>';
+    } else {
+      nearestEl.textContent = distByFrame && distByFrame.size ? "Nearest: —" : "";
+    }
+
+    if (worstName && worstTtc < TTC_NEARMISS) {
+      bannerEl.style.display = "block";
+      bannerEl.innerHTML = "⚠ Near-miss — " + worstName + " · TTC " + worstTtc.toFixed(1) + "s";
+    } else {
+      bannerEl.style.display = "none";
+    }
+  }
+
+  function updateSlices() {
+    if (!slicesArr.length) { slicechipEl.style.display = "none"; updateNudge(); return; }
+    const cur = sliceAt(orig.currentTime);
+    sliceSegEls.forEach((el, i) => el.classList.toggle("active", slicesArr[i] === cur));
+    const sig = (cur && cur.driving_signal) || "green";
+    slicechipEl.style.display = "";
+    slicechipEl.innerHTML = '<span class="chip" style="background:' +
+      (SIG_COLOR[sig] || "#666") + '"></span>Slice ' + (slicesArr.indexOf(cur) + 1) +
+      "/" + slicesArr.length + " · " + sig;
+    updateNudge();
+  }
+
+  // Queue-based nudges (restored from v5). Entering a voiced slice arms it once and appends
+  // it to the queue; the queue drains one clip at a time, each played from 0 to its natural
+  // end. A slice change never touches the audio already playing — it only affects what is
+  // queued. The earlier model slaved the clip to the video timeline and reassigned
+  // nudge.src the moment playback crossed into the next slice, which cut the clip off
+  // mid-sentence; audio is deliberately decoupled from the timeline now.
+  function enqueueNudge(s) {
+    if (!s || !(s.coaching_audio || "").trim()) return;
+    if (s === curNudge || nudgeQueue.includes(s) || armedSlices.has(s)) return;
+    armedSlices.add(s);
+    nudgeQueue.push(s);
+  }
+
+  // Start the next queued clip only when nothing is currently playing.
+  function pumpNudgeQueue() {
+    if (curNudge || !nudgeQueue.length || orig.paused) return;
+    curNudge = nudgeQueue.shift();
+    nudge.src = "nudges/" + encodeURIComponent(curNudge.coaching_audio);
+    fillCaption(curNudge);
+    orbcapEl.classList.add("show", "playing");
+    nudge.play().catch(() => {});    // src change resets currentTime to 0
+  }
+
+  // When the current clip ends, drop it and immediately start whatever is next.
+  nudge.addEventListener("ended", () => {
+    curNudge = null;
+    orbcapEl.classList.remove("playing");
+    if (nudgeQueue.length && !orig.paused) pumpNudgeQueue();
+    else orbcapEl.classList.remove("show");
+  });
+
+  // Called every frame from updateSlices: arm the slice we're in, then drain the queue.
+  function updateNudge() {
+    if (!orig.paused && !scrubbing) {
+      enqueueNudge(sliceAt(orig.currentTime));
+      pumpNudgeQueue();
+    }
+    if (curNudge) {
+      orbcapEl.classList.add("show");
+      orbcapEl.classList.toggle("playing", !nudge.paused);
+    }
+  }
+
+  function fillCaption(s) {
+    const sig = s.driving_signal || "green";
+    capSig.textContent = sig.toUpperCase();
+    capSig.style.color = SIG_COLOR[sig] || "#d6d9de";
+    orbcapEl.style.borderLeftColor = SIG_COLOR[sig] || "#33495e";
+    capBody.textContent = (s.coaching && s.coaching.trim()) ? s.coaching.trim() : coachingText(s.analysis);
+  }
+
+  // --- playback -----------------------------------------------------------
+  function togglePlay() {
+    ensureAudioGraph();
+    if (orig.paused) { orig.play(); depth.play(); }
+    else { orig.pause(); depth.pause(); }
+  }
+  playBtn.addEventListener("click", togglePlay);
+  nudgeBtn.addEventListener("click", () => {
+    if (!firstNudge) return;
+    ensureAudioGraph();
+    orig.currentTime = Math.max(0, firstNudge.start - 1.5);
+    orig.play(); depth.play();
+  });
+  document.addEventListener("keydown", e => {
+    if (e.code === "Space") { e.preventDefault(); togglePlay(); }
+    if (e.code === "ArrowRight") orig.currentTime = Math.min(orig.currentTime + 5, orig.duration || 0);
+    if (e.code === "ArrowLeft") orig.currentTime = Math.max(orig.currentTime - 5, 0);
+    if (e.key === "b" || e.key === "B") boxesEl.checked = !boxesEl.checked;
+    if (e.key === "d" || e.key === "D") distsEl.checked = !distsEl.checked;
+    if (e.key === "v" || e.key === "V") nudgeBtn.click();
+    if (e.key === "n" || e.key === "N") { const s = neighborStem(+1); if (s) selectSegment(s, !orig.paused); }
+    if (e.key === "p" || e.key === "P") { const s = neighborStem(-1); if (s) selectSegment(s, !orig.paused); }
+  });
+  orig.addEventListener("play", () => {
+    playBtn.classList.add("playing"); depth.play();
+    if (curNudge && nudge.paused) nudge.play().catch(() => {});  // resume the in-progress clip
+    pumpNudgeQueue();
+  });
+  // Pausing the video pauses the clip but keeps its position, so it resumes and finishes.
+  orig.addEventListener("pause", () => { playBtn.classList.remove("playing"); depth.pause(); nudge.pause(); });
+  // A seek drops only the *pending* queue and re-arms slices (so replays work); the clip
+  // already playing is left alone — once started, it plays to the end.
+  orig.addEventListener("seeked", () => {
+    depth.currentTime = orig.currentTime;
+    nudgeQueue = [];
+    armedSlices = new Set();
+  });
+  orig.addEventListener("ratechange", () => { nudge.playbackRate = orig.playbackRate; });
+  speedEl.addEventListener("change", () => {
+    orig.playbackRate = depth.playbackRate = parseFloat(speedEl.value);
+  });
+
+  let scrubbing = false;
+  seek.addEventListener("input", () => {
+    scrubbing = true;
+    orig.currentTime = (seek.value / 1000) * (orig.duration || 0);
+  });
+  seek.addEventListener("change", () => { scrubbing = false; });
+
+  const fmt = s => {
+    if (!isFinite(s)) return "0:00";
+    const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+    return m + ":" + String(sec).padStart(2, "0");
+  };
+
+  // ====================================================================
+  //  VOICE-REACTIVE CLOUD ORB (column 3)  — cloud_orb.html shader, driven
+  //  by the <audio id="nudge"> voiceover through a shared AudioContext.
+  // ====================================================================
+  const orbCanvas = document.getElementById("orb");
+  const gl = orbCanvas.getContext("webgl") || orbCanvas.getContext("experimental-webgl");
+
+  const ORB_VERT = `
+    attribute vec2 aPos;
+    void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
+  const ORB_FRAG = `
+    precision highp float;
+    uniform vec2  uRes;
+    uniform float uTime;
+    uniform float uAudio;
+    uniform float uPulse;
+    float hash(vec2 p){ p=fract(p*vec2(123.34,345.45)); p+=dot(p,p+34.345); return fract(p.x*p.y); }
+    float noise(vec2 p){
+      vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.0-2.0*f);
+      float a=hash(i), b=hash(i+vec2(1.0,0.0)), c=hash(i+vec2(0.0,1.0)), d=hash(i+vec2(1.0,1.0));
+      return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
+    }
+    float fbm(vec2 p){ float v=0.0,a=0.5; for(int i=0;i<6;i++){ v+=a*noise(p); p=p*2.02+vec2(3.1,1.7); a*=0.5; } return v; }
+    void main(){
+      vec2 uv=(gl_FragCoord.xy-0.5*uRes)/min(uRes.x,uRes.y);
+      float audio=uAudio, t=uTime;
+      float breath=sin(t*0.9)*0.5+0.5;
+      float scale=1.0-audio*0.10-uPulse*0.06-breath*0.015;
+      vec2 suv=uv*scale;
+      float r=length(suv);
+      float radius=0.34+audio*0.015+uPulse*0.01;   // v6: full-size orb for the fixed-width column
+      float mask=1.0-smoothstep(radius-0.008,radius+0.008,r);
+      vec3 surf=vec3(0.071,0.071,0.086);   // == --surface (#121216) so the orb sits on the panel, not black
+      if(mask<=0.0){ gl_FragColor=vec4(surf,1.0); return; }
+      vec2 p=suv;
+      float flow=t*0.14+audio*0.9;
+      float billow=sin(t*0.8)*0.05+sin(t*1.7+1.3)*0.03;
+      billow*=1.0+audio*2.5+uPulse*1.5;
+      vec2 q=vec2(fbm(p*2.6+vec2(0.0,-flow)),fbm(p*2.6+vec2(5.2,-flow*1.3)));
+      float warpAmt=0.45+audio*1.2+uPulse*0.6;
+      vec2 s=p*3.0;
+      s.y-=flow;
+      s+=warpAmt*(q-0.5)*vec2(1.0,2.0);
+      s.y+=billow;
+      float clouds=fbm(s*1.5);
+      clouds=clouds*clouds*(1.4+audio*1.0);
+      float g=clamp(suv.y*1.6+0.5+billow,0.0,1.0);
+      vec3 skyTop=vec3(0.42,0.52,0.95);
+      vec3 skyBot=vec3(0.88,0.92,1.0);
+      vec3 base=mix(skyBot,skyTop,g);
+      vec3 col=mix(base,vec3(1.0),clamp(clouds,0.0,1.0));
+      col*=0.9+audio*0.35+uPulse*0.25;
+      col+=(1.0-smoothstep(0.0,radius,r))*audio*0.12;
+      gl_FragColor=vec4(mix(surf,col,clamp(mask,0.0,1.0)),1.0);
+    }`;
+
+  let orbUniforms = null;
+  function initOrbGL() {
+    if (!gl) return;
+    const compile = (type, src) => {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src); gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(sh));
+      return sh;
+    };
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, ORB_VERT));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, ORB_FRAG));
+    gl.linkProgram(prog); gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+    const aPos = gl.getAttribLocation(prog, "aPos");
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+    orbUniforms = {
+      res: gl.getUniformLocation(prog, "uRes"),
+      time: gl.getUniformLocation(prog, "uTime"),
+      audio: gl.getUniformLocation(prog, "uAudio"),
+      pulse: gl.getUniformLocation(prog, "uPulse"),
+    };
+  }
+  function resizeOrb() {
+    if (!gl) return;
+    const d = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.max(1, Math.round(orbCanvas.clientWidth * d));
+    const h = Math.max(1, Math.round(orbCanvas.clientHeight * d));
+    if (orbCanvas.width !== w || orbCanvas.height !== h) {
+      orbCanvas.width = w; orbCanvas.height = h;
+      gl.viewport(0, 0, w, h);
+    }
+  }
+  window.addEventListener("resize", resizeOrb);
+  initOrbGL();
+
+  // Web Audio graph: nudge element -> analyser -> speakers. Created lazily on the
+  // first user gesture (autoplay policy), and shared as the orb's amplitude source.
+  let actx = null, analyser = null, freqData = null;
+  let orbLevel = 0, orbPrev = 0, orbPulse = 0;
+  function ensureAudioGraph() {
+    if (actx) { if (actx.state === "suspended") actx.resume(); return; }
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      actx = new Ctx();
+      const src = actx.createMediaElementSource(nudge);
+      analyser = actx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.75;
+      src.connect(analyser);
+      analyser.connect(actx.destination);
+      freqData = new Uint8Array(analyser.frequencyBinCount);
+    } catch (e) { /* one-shot: if the element source already exists, ignore */ }
+  }
+  window.addEventListener("pointerdown", ensureAudioGraph);
+
+  function readAudioLevel() {
+    if (!analyser || nudge.paused) return 0;
+    analyser.getByteFrequencyData(freqData);
+    let sum = 0, n = 0;
+    const top = Math.floor(freqData.length * 0.6);
+    for (let i = 2; i < top; i++) { sum += freqData[i]; n++; }
+    const raw = (sum / n) / 255;
+    return Math.min(1, Math.pow(raw * 1.6, 1.2));
+  }
+
+  function renderOrb(t) {
+    if (!gl || !orbUniforms) return;
+    resizeOrb();
+    const target = readAudioLevel();
+    orbLevel += (target - orbLevel) * 0.2;
+    const rise = Math.max(0, orbLevel - orbPrev);
+    orbPulse += (rise * 4.0 - orbPulse) * 0.35;
+    orbPulse = Math.max(0, Math.min(1, orbPulse));
+    orbPrev = orbLevel;
+
+    orbtagEl.classList.toggle("speaking", !nudge.paused && orbLevel > 0.02);
+
+    gl.uniform2f(orbUniforms.res, orbCanvas.width, orbCanvas.height);
+    gl.uniform1f(orbUniforms.time, t);
+    gl.uniform1f(orbUniforms.audio, orbLevel);
+    gl.uniform1f(orbUniforms.pulse, orbPulse);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  // --- master loop: video overlays + HUD + slices + orb -------------------
+  const bootTime = performance.now();
+  function tick(now) {
+    if (!scrubbing && orig.duration) {
+      seek.value = Math.round((orig.currentTime / orig.duration) * 1000);
+    }
+    timeEl.textContent = fmt(orig.currentTime) + " / " + fmt(orig.duration);
+    if (depth.readyState >= 2 && !depth.seeking &&
+        Math.abs(depth.currentTime - orig.currentTime) > 0.05) {
+      depth.currentTime = orig.currentTime;
+    }
+    const { objs } = objectsAtTime(orig.currentTime);
+    drawOverlay(ovOrig, orig, orig.parentElement, objs);
+    drawOverlay(ovDepth, depth, depth.parentElement, objs);
+    updateHud(objs);
+    updateSlices();
+    renderOrb((now - bootTime) / 1000);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+</script>
+</body>
+</html>

@@ -1,0 +1,1405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How a nudge is made — dashcam distance geometry</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#060608; --surface:#121216; --surface-2:#1a1a20; --sunk:#0c0c0f;
+    --border:#262630; --border-2:#33333f;
+    --ink:#e8eaed; --muted:#8a919b; --dim:#6b727c;
+    --veh:#7ee07e; --per:#ffb14a; --ani:#5aabff;
+    --blue:#4d8bff; --amber:#ffb14a; --red:#ff6b6b; --ray:#5aabff;
+  }
+  * { box-sizing:border-box; margin:0; }
+  body {
+    background:var(--bg); color:var(--ink);
+    font:15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+    text-rendering:optimizeLegibility;
+  }
+  .wrap { max-width:1200px; margin:0 auto; padding:34px 22px 90px; }
+
+  /* ---------- header ---------- */
+  header { border-bottom:1px solid var(--border); padding-bottom:22px; }
+  .kicker { font-size:11px; letter-spacing:1.6px; text-transform:uppercase; color:var(--dim); }
+  h1 { font-size:30px; line-height:1.25; font-weight:650; margin:8px 0 10px; letter-spacing:-.2px; }
+  h1 em { font-style:normal; color:var(--blue); }
+  .lede { color:#b9bfc7; max-width:80ch; }
+  .lede + .lede { margin-top:10px; }
+  .chips { display:flex; flex-wrap:wrap; gap:7px; margin-top:18px; }
+  .chip {
+    background:var(--surface-2); border:1px solid var(--border); border-radius:999px;
+    padding:4px 11px; font-size:12px; color:#c3c9d1; font-variant-numeric:tabular-nums;
+  }
+  .chip b { color:var(--ink); font-weight:600; }
+  .chip.warn { border-color:#5a4420; background:#241b0d; color:var(--amber); }
+
+  /* ---------- sections ---------- */
+  section { margin-top:52px; }
+  .stage { display:flex; align-items:baseline; gap:11px; margin-bottom:6px; }
+  .stage .n {
+    flex:none; width:24px; height:24px; border-radius:7px; background:var(--surface-2);
+    border:1px solid var(--border-2); color:var(--muted);
+    font-size:12px; font-weight:650; display:grid; place-items:center;
+  }
+  .stage .t { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--dim); }
+  h2 { font-size:22px; font-weight:620; letter-spacing:-.1px; margin-bottom:9px; }
+  section > .lede { color:#a8aeb7; font-size:14.5px; }
+
+  .panel {
+    background:var(--surface); border:1px solid var(--border); border-radius:14px;
+    padding:16px; margin-top:18px;
+  }
+  .panel.sunk { background:var(--sunk); }
+  .panel > .cap {
+    font-size:11px; letter-spacing:1.2px; text-transform:uppercase; color:var(--dim);
+    margin-bottom:10px;
+  }
+  .grid2 { display:grid; grid-template-columns:1.4fr 1fr; gap:16px; align-items:stretch; }
+  .grid2.even { grid-template-columns:1fr 1fr; }
+  .grid2.wide-right { grid-template-columns:1fr 1.3fr; }
+  .grid2 > .panel { display:flex; flex-direction:column; min-width:0; }
+  .grid2 > .panel > .fill { flex:1; }
+  .legend { list-style:none; display:grid; gap:8px; margin-top:15px; font-size:12.5px;
+            color:#8a919b; line-height:1.5; }
+  .legend i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:9px;
+              vertical-align:baseline; }
+  .legend b { color:#c3c9d1; font-weight:600;
+              font-family:ui-monospace,Consolas,monospace; }
+  @media (max-width:940px){ .grid2, .grid2.even { grid-template-columns:1fr; } }
+
+  svg { display:block; width:100%; height:auto; }
+
+  /* ---------- controls ---------- */
+  .controls {
+    display:flex; flex-wrap:wrap; gap:14px 22px; align-items:flex-end;
+    background:var(--surface-2); border:1px solid var(--border); border-radius:12px;
+    padding:13px 16px; margin-top:18px;
+  }
+  .ctl { display:flex; flex-direction:column; gap:5px; min-width:150px; flex:1 1 150px; }
+  .ctl label { font-size:11px; letter-spacing:.7px; text-transform:uppercase; color:var(--dim); }
+  .ctl .row { display:flex; align-items:center; gap:9px; }
+  .ctl output {
+    font-size:13px; font-variant-numeric:tabular-nums; color:var(--ink);
+    min-width:62px; text-align:right; font-weight:600;
+  }
+  input[type=range] { -webkit-appearance:none; appearance:none; width:100%; height:18px; background:transparent; }
+  input[type=range]::-webkit-slider-runnable-track { height:3px; background:#3a3a46; border-radius:2px; }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance:none; width:14px; height:14px; margin-top:-5.5px; border-radius:50%;
+    background:var(--ink); border:2px solid var(--bg); box-shadow:0 0 0 1px #55555f;
+  }
+  input[type=range]::-moz-range-track { height:3px; background:#3a3a46; border-radius:2px; }
+  input[type=range]::-moz-range-thumb {
+    width:12px; height:12px; border-radius:50%; background:var(--ink); border:2px solid var(--bg);
+  }
+  select, .btn {
+    background:var(--surface); color:var(--ink); border:1px solid var(--border-2);
+    border-radius:8px; padding:6px 11px; font:inherit; font-size:13px; cursor:pointer;
+  }
+  .btn:hover, select:hover { border-color:#4a4a58; }
+  .seg { display:inline-flex; border:1px solid var(--border-2); border-radius:9px; overflow:hidden; }
+  .seg button {
+    background:transparent; border:0; color:var(--muted); font:inherit; font-size:13px;
+    padding:7px 14px; cursor:pointer;
+  }
+  .seg button + button { border-left:1px solid var(--border-2); }
+  .seg button[aria-pressed="true"] { background:#25252e; color:var(--ink); font-weight:600; }
+
+  /* ---------- facts ---------- */
+  .facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(158px,1fr)); gap:1px; margin-top:18px;
+           background:var(--border); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .fact { background:var(--surface); padding:12px 14px; }
+  .fact .k { font-size:10.5px; letter-spacing:.9px; text-transform:uppercase; color:var(--dim); }
+  .fact .v { font-size:19px; font-weight:620; font-variant-numeric:tabular-nums; margin-top:3px; letter-spacing:-.3px; }
+  .fact .s { font-size:11.5px; color:var(--dim); margin-top:1px; }
+  .fact .v.hl { color:var(--amber); }
+  .fact .v.ok { color:var(--veh); }
+
+  /* ---------- formula card ---------- */
+  .formula {
+    font-family:ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size:12.5px; line-height:2.0; color:#a8aeb7;
+    background:var(--sunk); border:1px solid var(--border); border-radius:10px;
+    padding:13px 15px; overflow-x:auto; white-space:nowrap;
+  }
+  .formula .lbl { color:var(--dim); }
+  .formula b { color:var(--ink); font-weight:600; }
+  .formula .num { color:var(--veh); font-weight:600; }
+  .formula .bad { color:var(--red); font-weight:600; }
+  .formula .warnv { color:var(--amber); font-weight:600; }
+  .formula hr { border:0; border-top:1px solid var(--border); margin:8px 0; }
+
+  .note {
+    font-size:13px; color:var(--dim); line-height:1.65; margin-top:14px;
+    border-left:2px solid var(--border-2); padding-left:13px;
+  }
+  .note b { color:#b9bfc7; font-weight:600; }
+  .note.warn { border-left-color:#6a5220; color:#c8a86a; }
+
+  .badge {
+    display:inline-block; padding:3px 11px; border-radius:999px; font-size:12px; font-weight:650;
+    font-variant-numeric:tabular-nums;
+  }
+  .badge.ok   { background:#122415; border:1px solid #2f5c34; color:var(--veh); }
+  .badge.amber{ background:#251b0c; border:1px solid #6a5220; color:var(--amber); }
+  .badge.red  { background:#2a1113; border:1px solid #7a2b30; color:var(--red); }
+
+  /* ---------- readouts ---------- */
+  .reads { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:1px;
+           background:var(--border); border:1px solid var(--border); border-radius:11px; overflow:hidden; }
+  .reads.three { grid-template-columns:repeat(3,1fr); }
+  @media (max-width:620px){ .reads.three { grid-template-columns:repeat(2,1fr); } }
+  .read { background:var(--sunk); padding:10px 12px; }
+  .read .k { font-size:10px; letter-spacing:.9px; text-transform:uppercase; color:var(--dim); }
+  .read .v { font-size:20px; font-weight:650; font-variant-numeric:tabular-nums; letter-spacing:-.4px; margin-top:2px; }
+  .read .s { font-size:11px; color:var(--dim); }
+
+  /* ---------- nudge ---------- */
+  .nudge {
+    margin-top:16px; border:1px solid var(--border); border-radius:13px; background:var(--surface-2);
+    padding:15px 17px; opacity:.32; transition:opacity .25s, border-color .25s, box-shadow .25s;
+  }
+  .nudge.live { opacity:1; border-color:#7a2b30; box-shadow:0 0 26px rgba(255,60,60,.14); }
+  .nudge .hd { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:9px; }
+  .nudge .hd .who { font-size:11px; letter-spacing:1.2px; text-transform:uppercase; color:var(--dim); }
+  .nudge .say { font-size:15.5px; line-height:1.55; color:var(--ink); }
+  .nudge .meta { font-size:12px; color:var(--dim); margin-top:9px; font-variant-numeric:tabular-nums; }
+
+  /* ---------- chain ---------- */
+  .chain { display:flex; flex-wrap:wrap; gap:8px; align-items:stretch; margin-top:18px; }
+  .link {
+    flex:1 1 132px; background:var(--surface); border:1px solid var(--border); border-radius:11px;
+    padding:11px 13px; position:relative;
+  }
+  .link .k { font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--dim); }
+  .link .v { font-size:13.5px; margin-top:4px; color:#c8ced6; line-height:1.45; }
+  .link .v b { color:var(--ink); font-weight:600; }
+
+  footer { margin-top:60px; border-top:1px solid var(--border); padding-top:20px; font-size:13px; color:var(--dim); }
+  footer b { color:#b9bfc7; font-weight:600; }
+  a { color:var(--ani); text-decoration:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">VideoDB demo day · dashcam pipeline</div>
+  <h1>&lsquo;Near&rsquo; isn't a number. <em>Metres are.</em></h1>
+  <p class="lede">
+    A detector gives you a box, not a distance. The distance comes out of geometry: where an
+    object's tyres meet the road, plus the horizon line, the camera height and the focal length.
+    That yields metres &mdash; measured from the <b>front bumper</b>, not from the lens and not from
+    the bottom of the picture. Known vehicle widths cross-check the answer.
+  </p>
+  <p class="lede">
+    Track the same object across frames and the distance turns into closing speed and
+    time-to-collision. That is what a nudge is made of.
+  </p>
+  <div class="chips">
+    <span class="chip">calibration slot <b>dashcam_calibration.json</b></span>
+    <span class="chip">f<sub>px</sub> <b>915</b> @ 1920&times;1080</span>
+    <span class="chip">v&#8320; <b>0.50</b></span>
+    <span class="chip">cam_h <b>1.30 m</b></span>
+    <span class="chip">bumper_offset <b>1.80 m</b></span>
+    <span class="chip">camera <b>DDPAI Mini 5</b></span>
+    <span class="chip warn">calibrated: false &mdash; values are estimates</span>
+  </div>
+</header>
+
+<!-- ═══════════════ STAGE 1 ═══════════════ -->
+<section>
+  <div class="stage"><span class="n">1</span><span class="t">The rig</span></div>
+  <h2>Where the camera actually is</h2>
+  <p class="lede">
+    Every number downstream hangs off three physical measurements: how high the lens sits, how far
+    back it sits from the bumper, and how much road the bonnet hides. Swap the body to see which of
+    the three actually moves the answer &mdash; it is not the one people expect.
+  </p>
+
+  <div class="controls">
+    <div class="ctl" style="flex:0 0 auto">
+      <label>Vehicle</label>
+      <div class="seg" id="rigSeg">
+        <button data-rig="hatch" aria-pressed="true">Measured rig &mdash; i20 Asta</button>
+        <button data-rig="suv" aria-pressed="false">Tall SUV &mdash; Q7 class</button>
+      </div>
+    </div>
+    <div class="ctl" style="flex:1 1 260px">
+      <label>Body</label>
+      <div id="rigDesc" style="font-size:13px;color:#b9bfc7"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="cap">Side elevation &mdash; true scale, metres</div>
+    <svg id="svgSide" viewBox="0 0 1040 356" role="img" aria-label="Side elevation of the ego vehicle showing camera height, bumper offset and the bonnet blind zone"></svg>
+  </div>
+
+  <div class="facts" id="factsRig"></div>
+
+  <p class="note" id="rigNote"></p>
+</section>
+
+<!-- ═══════════════ STAGE 2 ═══════════════ -->
+<section>
+  <div class="stage"><span class="n">2</span><span class="t">The view scope</span></div>
+  <h2>What the lens can see, from the bumper outward</h2>
+  <p class="lede">
+    Seen from above, the camera's reach is a cone with a hole punched in the near end. The raw lens
+    is a 140&deg;-diagonal fisheye; the geometry only holds after undistortion, over a narrower
+    rectilinear frame &mdash; and it holds <em>best</em> near the optical centre, which is exactly
+    where the lead vehicle sits.
+  </p>
+
+  <div class="panel">
+    <div class="cap">Plan view &mdash; range rings measured from the front bumper</div>
+    <svg id="svgPlan" viewBox="0 0 1040 512" role="img" aria-label="Plan view of the camera field of view with range rings measured from the front bumper"></svg>
+  </div>
+
+  <div class="facts" id="factsPlan"></div>
+</section>
+
+<!-- ═══════════════ STAGE 3 ═══════════════ -->
+<section>
+  <div class="stage"><span class="n">3</span><span class="t">One frame</span></div>
+  <h2>From a pixel row to metres</h2>
+  <p class="lede">
+    Two independent routes, run on every box of every frame. <b>Route A</b> reads the row where the
+    tyres touch the road against the horizon. <b>Route B</b> reads the box width against a known
+    vehicle width. They fail in different places, so they are fused by confidence rather than
+    picked between.
+  </p>
+
+  <div class="controls">
+    <div class="ctl">
+      <label>True gap from bumper</label>
+      <div class="row"><input id="cGap" type="range" min="2" max="30" step="0.25" value="9"><output id="oGap"></output></div>
+    </div>
+    <div class="ctl">
+      <label>Lateral offset</label>
+      <div class="row"><input id="cLat" type="range" min="-5" max="5" step="0.1" value="0"><output id="oLat"></output></div>
+    </div>
+    <div class="ctl">
+      <label>Object class (assumed width)</label>
+      <div class="row"><select id="cCls">
+        <option value="car" selected>car — 1.8 m</option>
+        <option value="truck">truck — 2.5 m</option>
+        <option value="bus">bus — 2.5 m</option>
+        <option value="motorcycle">motorcycle — 0.8 m</option>
+        <option value="person">person — 0.5 m</option>
+      </select></div>
+    </div>
+    <div class="ctl">
+      <label>Its <em>real</em> width</label>
+      <div class="row"><input id="cW" type="range" min="0.4" max="3.0" step="0.02" value="1.8"><output id="oW"></output></div>
+    </div>
+    <div class="ctl">
+      <label>Camera pitch error</label>
+      <div class="row"><input id="cPitch" type="range" min="-2.5" max="2.5" step="0.05" value="0"><output id="oPitch"></output></div>
+    </div>
+    <div class="ctl">
+      <label>Detector confidence</label>
+      <div class="row"><input id="cConf" type="range" min="0.25" max="0.98" step="0.01" value="0.85"><output id="oConf"></output></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <div class="cap">The frame the detector sees &mdash; normalised coordinates</div>
+      <svg id="svgFrame" viewBox="0 0 640 360" role="img" aria-label="Simulated camera frame with horizon line and a detection box"></svg>
+      <ul class="legend">
+        <li><i style="background:#8a919b"></i><b>v&#8320;</b> &mdash; the assumed horizon, and the only
+          vertical reference the geometry has. Move the pitch slider and a red line appears: that is
+          where the horizon really is.</li>
+        <li><i style="background:#7ee07e"></i><b>v_n</b> &mdash; the contact row, where the tyres meet
+          the road. This single number is Route A's entire input.</li>
+        <li><i style="background:#7ee07e"></i><b>w_n</b> &mdash; the box width. This single number is
+          Route B's entire input.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <div class="cap">The arithmetic, with this frame's numbers</div>
+      <div class="formula" id="fxA"></div>
+      <div style="height:14px"></div>
+      <div class="cap">Where the two routes land &mdash; Z in metres from the lens</div>
+      <svg id="svgRoutes" viewBox="0 0 460 132" role="img" aria-label="Comparison of the two distance routes and the fused result"></svg>
+    </div>
+  </div>
+
+  <p class="note" id="fxNote"></p>
+
+  <div class="panel">
+    <div class="cap">The same instant, from the side &mdash; the ray that produced that pixel row</div>
+    <svg id="svgRay" viewBox="0 0 1040 186" role="img" aria-label="Side view of the sight ray from camera to the object ground contact point"></svg>
+  </div>
+</section>
+
+<!-- ═══════════════ STAGE 4 ═══════════════ -->
+<section>
+  <div class="stage"><span class="n">4</span><span class="t">Many frames</span></div>
+  <h2>Metres become closing speed, then time</h2>
+  <p class="lede">
+    This is not a simulation. Below are <b>124 real YOLO boxes</b> from one tracked car in
+    <code style="font-size:13px;color:#b9bfc7">Pune to Velhe Trip (part 6 of 11)</code>, frames
+    47232&ndash;47356, replayed through the same arithmetic in your browser. Every reading matches
+    <code style="font-size:13px;color:#b9bfc7">distances/&hellip;.json</code> on disk to the last decimal.
+  </p>
+
+  <div class="controls">
+    <div class="ctl" style="flex:0 0 auto">
+      <label>Playback</label>
+      <div class="row"><button class="btn" id="btnPlay">▶ Play</button><button class="btn" id="btnRestart">↺</button></div>
+    </div>
+    <div class="ctl" style="flex:1 1 300px">
+      <label>Frame</label>
+      <div class="row"><input id="cFrame" type="range" min="0" max="123" step="1" value="0"><output id="oFrame" style="min-width:112px;white-space:nowrap"></output></div>
+    </div>
+    <div class="ctl" style="flex:0 0 auto">
+      <label>Speed</label>
+      <div class="row"><select id="cSpeed">
+        <option value="0.25">0.25×</option>
+        <option value="0.5" selected>0.5×</option>
+        <option value="1">1×</option>
+      </select></div>
+    </div>
+  </div>
+
+  <div class="grid2 wide-right">
+    <div class="panel">
+      <div class="cap">Real detection box, frame by frame</div>
+      <svg id="svgFrame2" viewBox="0 0 640 360" role="img" aria-label="Real detection box replayed in a frame view"></svg>
+      <div style="height:14px"></div>
+      <div class="cap">This frame, computed live</div>
+      <div class="reads three" id="reads"></div>
+    </div>
+    <div class="panel">
+      <div class="cap">Gap from bumper (m) &mdash; raw per frame vs rolling median, window 7</div>
+      <svg id="svgChart" viewBox="0 0 500 178" role="img" aria-label="Chart of gap over time"></svg>
+      <div class="cap" style="margin-top:12px">Time-to-collision (s) &mdash; two independent channels</div>
+      <svg id="svgTtc" viewBox="0 0 500 150" role="img" aria-label="Chart of time to collision over time"></svg>
+    </div>
+  </div>
+
+  <div style="height:22px"></div>
+  <div style="font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);margin-bottom:8px">
+    What actually gets stored &mdash; the four per-track fields in <code>distances/&lt;stem&gt;.json</code>
+  </div>
+  <div class="reads" id="sums"></div>
+
+  <div class="nudge" id="nudge">
+    <div class="hd">
+      <span class="who">coaching layer · Sarvam TTS</span>
+      <span class="badge red" id="nudgeBadge">armed</span>
+    </div>
+    <div class="say" id="nudgeSay">&mdash;</div>
+    <div class="meta" id="nudgeMeta"></div>
+  </div>
+
+  <p class="note">
+    <b>Two channels, on purpose.</b> The metric TTC needs the calibration to be right.
+    The scale-invariant one, <code>TTC &asymp; 2 / (d/dt&middot;ln area)</code>, comes purely from
+    how fast the box is growing &mdash; no focal length, no camera height, no ego speed. While the
+    calibration slot still says <code>calibrated: false</code>, that second channel is the one to
+    trust, and the two agreeing is what makes a nudge safe to fire.
+  </p>
+  <p class="note warn" id="s4note"></p>
+</section>
+
+<!-- ═══════════════ CHAIN ═══════════════ -->
+<section>
+  <div class="stage"><span class="n">5</span><span class="t">End to end</span></div>
+  <h2>What a nudge is made of</h2>
+  <div class="chain">
+    <div class="link"><div class="k">pixels</div><div class="v">YOLO26 box, normalised <b>xyxy</b></div></div>
+    <div class="link"><div class="k">identity</div><div class="v">greedy IoU tracker → a stable <b>track_id</b></div></div>
+    <div class="link"><div class="k">geometry</div><div class="v">contact row + width → <b>Z</b> from the lens</div></div>
+    <div class="link"><div class="k">reference</div><div class="v">− 1.80 m → <b>gap</b> from the bumper</div></div>
+    <div class="link"><div class="k">time</div><div class="v">median 7, slope over 9 → <b>closing speed</b></div></div>
+    <div class="link"><div class="k">risk</div><div class="v">Z / v<sub>close</sub> → <b>TTC</b>, plus the scale-free check</div></div>
+    <div class="link"><div class="k">words</div><div class="v">evidence → LLM → <b>a spoken nudge</b></div></div>
+  </div>
+</section>
+
+<footer>
+  <p>
+    <b>Honest status.</b> The horizon is still assumed at <code>v&#8320; = 0.50</code> and the focal
+    length is derived from the sensor spec, not measured &mdash; so absolute metres carry real error
+    (stage 3's pitch slider shows how much). What is already trustworthy is the <b>relative</b>
+    behaviour: which object is closer, whether a gap is shrinking, and the scale-invariant TTC.
+    Running the benchmark in <code>dashcam_distance_benchmark.md</code> and setting
+    <code>calibrated: true</code> fixes the absolutes with no code change.
+  </p>
+</footer>
+
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   Calibration slot — mirrors calibration/dashcam_calibration.json exactly.
+   ══════════════════════════════════════════════════════════════════════════ */
+const CAL = {
+  nw: 1920, nh: 1080, f_px: 915, v0: 0.50, cam_h: 1.30, bumper: 1.80,
+  class_width_m: { person:0.5, bicycle:0.5, car:1.8, motorcycle:0.8, bus:2.5, truck:2.5 },
+  class_rel:     { person:0.4, bicycle:0.4, car:0.85, motorcycle:0.5, bus:0.7, truck:0.7 }
+};
+CAL.fny = CAL.f_px / CAL.nh;   // 0.847222
+CAL.fnx = CAL.f_px / CAL.nw;   // 0.476563
+const MAX_Z = 120.0, SMOOTH_WIN = 7, SLOPE_WIN = 9, MIN_CLOSING = 0.3;
+const TTC_CAUTION = 2.5, TTC_NEARMISS = 1.5, TTC_FRAME_WIN = 15;  // trip_dist_viewer_v6.html
+const OBJ_H = { car:1.50, truck:3.20, bus:3.20, motorcycle:1.50, person:1.70, bicycle:1.60 };
+
+const DEG = 180 / Math.PI;
+const halfV = Math.atan(0.5 * CAL.nh / CAL.f_px);   // 30.5°  vertical half-FOV (rectilinear)
+const halfH = Math.atan(0.5 * CAL.nw / CAL.f_px);   // 46.4°  horizontal half-FOV
+const FISH_HALF_H = 60.2 / DEG;                     // raw equidistant fisheye, from the sensor spec
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s);
+const f1 = v => v.toFixed(1), f2 = v => v.toFixed(2), f3 = v => v.toFixed(3);
+
+/* ══════════════════════════════════════════════════════════════════════════
+   estimate_box() — a direct port of make_distances.py. Same weights, same
+   agreement bonus, same rounding behaviour, so the numbers below are the
+   numbers on disk.
+   ══════════════════════════════════════════════════════════════════════════ */
+function estimateBox(cls, conf, x1, y1, x2, y2) {
+  const vc = y2, routes = [];
+  let zg = null, wg = 0;
+  if (vc > CAL.v0) {
+    const z = CAL.fny * CAL.cam_h / (vc - CAL.v0);
+    const w = Math.min(1, (vc - CAL.v0) / 0.20) * conf;
+    if (z > 0 && z < MAX_Z && w > 0) { zg = z; wg = w; routes.push([z, w]); }
+  }
+  let zw = null, ww = 0;
+  const wn = Math.abs(x2 - x1), W = CAL.class_width_m[cls];
+  if (W && wn > 1e-4) {
+    const z = CAL.fnx * W / wn;
+    const w = (CAL.class_rel[cls] ?? 0.5) * conf;
+    if (z > 0 && z < MAX_Z && w > 0) { zw = z; ww = w; routes.push([z, w]); }
+  }
+  if (!routes.length) return null;
+  const wsum = routes.reduce((a, r) => a + r[1], 0);
+  const z = routes.reduce((a, r) => a + r[0] * r[1], 0) / wsum;
+  let c = Math.min(1, wsum / 2), agree = null;
+  if (routes.length === 2) {
+    const za = routes[0][0], zb = routes[1][0];
+    agree = 1 - Math.min(1, Math.abs(za - zb) / Math.max(za, zb));
+    c = Math.min(1, c * (0.6 + 0.4 * agree) + 0.15 * agree);
+  }
+  return { z, gap: z - CAL.bumper, conf: c, zg, zw, wg, ww, wsum, agree, vn: vc, wn };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Vehicle presets. Body paths are in METRES (x = 0 at the rear bumper,
+   y = 0 at the road) and drawn inside a flipped group, so the drawing and
+   the dimension lines cannot drift apart.
+   ══════════════════════════════════════════════════════════════════════════ */
+const RIGS = {
+  hatch: {
+    label: 'Hyundai i20 Asta (2017) — the rig these numbers were measured on',
+    dims: '3985 × 1734 × 1505 mm · bonnet 1000 mm',
+    measured: true,
+    len: 3.985, wid: 1.734, ht: 1.505,
+    camH: 1.30, bumper: 1.80, bonnetLen: 1.00, edge: [3.90, 0.92],
+    body: 'M0.10,0.44 L0.10,1.00 C0.16,1.32 0.60,1.46 1.08,1.50 L1.72,1.505 ' +
+          'C2.20,1.30 2.62,1.08 3.00,0.95 C3.35,0.93 3.70,0.93 3.90,0.92 ' +
+          'C3.97,0.86 3.985,0.70 3.96,0.56 L3.90,0.44 Z',
+    glass: 'M1.78,1.46 L2.96,0.98',
+    win:   'M1.62,1.43 L1.06,1.43 L0.52,1.13 L1.56,1.10 Z',
+    wheels: [[0.85, 0.315], [3.10, 0.315]]
+  },
+  suv: {
+    label: 'Q7-class SUV — illustrative body, mount re-estimated for an upright screen',
+    dims: '5050 × 1970 × 1740 mm · bonnet 1250 mm',
+    measured: false,
+    len: 5.05, wid: 1.97, ht: 1.74,
+    camH: 1.48, bumper: 1.41, bonnetLen: 1.25, edge: [4.93, 1.14],
+    body: 'M0.12,0.58 L0.12,1.24 C0.20,1.60 0.70,1.72 1.15,1.735 L3.50,1.74 ' +
+          'C3.62,1.58 3.70,1.34 3.80,1.18 C4.20,1.16 4.70,1.15 4.93,1.14 ' +
+          'C5.02,1.05 5.05,0.86 5.02,0.72 L4.95,0.58 Z',
+    glass: 'M3.52,1.70 L3.78,1.22',
+    win:   'M3.34,1.66 L1.35,1.66 L1.05,1.36 L3.28,1.34 Z',
+    wheels: [[1.15, 0.37], [4.10, 0.37]]
+  }
+};
+let rigKey = 'hatch';
+
+/* Derived geometry for a rig: blind zone, FOV ground hits, bonnet row. */
+function rigGeom(r) {
+  const camX = r.len - r.bumper, camY = r.camH;
+  const dx = r.edge[0] - camX, dy = camY - r.edge[1];
+  const occRange = dy > 1e-6 ? camY * dx / dy : Infinity;   // camera → first visible road
+  const lowRange = camY / Math.tan(halfV);                  // camera → bottom row of frame
+  const edgeRow  = 0.5 + (CAL.f_px * (dy / dx)) / CAL.nh;   // v_n of the bonnet's leading edge
+  return {
+    camX, camY, dx, dy, occRange, lowRange, edgeRow,
+    occX: camX + occRange, lowX: camX + lowRange,
+    blind: camX + occRange - r.len                          // first visible road, from the bumper
+  };
+}
+
+/* ── tiny SVG helpers ────────────────────────────────────────────────────── */
+function T(x, y, txt, o = {}) {
+  const a = [`x="${x}"`, `y="${y}"`, `font-size="${o.fs || 11.5}"`,
+             `fill="${o.fill || '#8a919b'}"`, `text-anchor="${o.anchor || 'start'}"`];
+  if (o.weight) a.push(`font-weight="${o.weight}"`);
+  if (o.ls) a.push(`letter-spacing="${o.ls}"`);
+  if (o.mono) a.push('font-family="ui-monospace,Consolas,monospace"');
+  return `<text ${a.join(' ')}>${txt}</text>`;
+}
+function L(x1, y1, x2, y2, o = {}) {
+  return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${o.c || '#3a3a46'}" ` +
+         `stroke-width="${o.w || 1}"${o.d ? ` stroke-dasharray="${o.d}"` : ''}` +
+         `${o.cap ? ` stroke-linecap="${o.cap}"` : ''}/>`;
+}
+
+/* Vertical dimension line with end ticks. Label sits left unless side:'right'. */
+function dimV(x, ya, yb, label, o = {}) {
+  const c = o.c || '#6b727c', t = 5;
+  const line = L(x, ya, x, yb, { c, w: 1 }) +
+               L(x - t, ya, x + t, ya, { c }) + L(x - t, yb, x + t, yb, { c });
+  const style = { fill: o.tc || '#c3c9d1', fs: o.fs || 12, weight: 600 };
+  if (o.side === 'top') return line + T(x, Math.min(ya, yb) - 9, label, { ...style, anchor: 'middle' });
+  const right = o.side === 'right';
+  return line + T(x + (right ? 9 : -9), (ya + yb) / 2 + 4, label,
+                  { ...style, anchor: right ? 'start' : 'end' });
+}
+/* Horizontal dimension line with end ticks. */
+function dimH(y, xa, xb, label, o = {}) {
+  const c = o.c || '#6b727c', t = 5;
+  return L(xa, y, xb, y, { c, w: 1 }) +
+         L(xa, y - t, xa, y + t, { c }) + L(xb, y - t, xb, y + t, { c }) +
+         T((xa + xb) / 2, y - 7, label, { fill: o.tc || '#c3c9d1', anchor: 'middle', fs: o.fs || 12, weight: 600 });
+}
+
+/* The car, drawn in metre space inside a flipped group. */
+function carSVG(r, ox, gy, s, id) {
+  const g = `translate(${ox},${gy}) scale(${s},${-s})`;
+  return `
+  <defs>
+    <linearGradient id="paint${id}" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"   stop-color="#1c47b4"/>
+      <stop offset="0.55" stop-color="#2f6df0"/>
+      <stop offset="1"   stop-color="#5b9bff"/>
+    </linearGradient>
+  </defs>
+  <g transform="${g}">
+    <ellipse cx="${r.len / 2}" cy="0.02" rx="${r.len / 2 * 0.98}" ry="0.06" fill="#000" opacity="0.45"/>
+    <path d="${r.body}" fill="url(#paint${id})" stroke="#8fb7ff" stroke-width="1.1"
+          vector-effect="non-scaling-stroke" stroke-opacity="0.5"/>
+    <path d="${r.win}" fill="#0d1a30" stroke="#7fa8ee" stroke-width="1"
+          vector-effect="non-scaling-stroke" stroke-opacity="0.45"/>
+    <path d="${r.glass}" fill="none" stroke="#9fc4ff" stroke-width="7"
+          vector-effect="non-scaling-stroke" stroke-opacity="0.30" stroke-linecap="round"/>
+    ${r.wheels.map(([wx, wr]) => `
+      <circle cx="${wx}" cy="${wr}" r="${wr}" fill="#08080a" stroke="#2b2b34"
+              stroke-width="1" vector-effect="non-scaling-stroke"/>
+      <circle cx="${wx}" cy="${wr}" r="${wr * 0.48}" fill="#23252c"/>`).join('')}
+  </g>`;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STAGE 1 — side elevation
+   ══════════════════════════════════════════════════════════════════════════ */
+function drawSide() {
+  const r = RIGS[rigKey], G = rigGeom(r);
+  const s = 56, ox = 56, gy = 250;
+  const X = m => ox + m * s, Y = m => gy - m * s;
+  const RIGHT = 1010, TOP = 12;
+  let o = '';
+
+  o += `<defs><clipPath id="clipSide"><rect x="${ox - 20}" y="${TOP}" width="${RIGHT - ox + 20}" height="${gy - TOP}"/></clipPath>
+        <pattern id="hatchGrey" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+          <line x1="0" y1="0" x2="0" y2="6" stroke="#3a3a46" stroke-width="1.4"/></pattern></defs>`;
+
+  /* sky + road */
+  o += `<rect x="0" y="0" width="1040" height="${gy}" fill="#0b0d12"/>`;
+  o += `<rect x="0" y="${gy}" width="1040" height="${356 - gy}" fill="#101015"/>`;
+
+  const maxM = (RIGHT - ox) / s;
+
+  /* --- shaded ground zones (drawn under everything) --- */
+  const camPx = { x: X(G.camX), y: Y(G.camY) };
+  /* below the frame's bottom row */
+  o += `<polygon points="${camPx.x},${camPx.y} ${X(G.lowX)},${gy} ${X(G.camX)},${gy}"
+         fill="url(#hatchGrey)" opacity="0.5"/>`;
+  /* in the cone but hidden by the bonnet */
+  o += `<polygon points="${camPx.x},${camPx.y} ${X(G.lowX)},${gy} ${X(G.occX)},${gy}"
+         fill="#ffb14a" opacity="0.10"/>`;
+  /* visible road */
+  o += `<rect x="${X(G.occX)}" y="${gy}" width="${RIGHT - X(G.occX)}" height="5" fill="#7ee07e" opacity="0.55"/>`;
+
+  /* --- FOV rays (clipped) --- */
+  o += `<g clip-path="url(#clipSide)">`;
+  const upY = G.camY + Math.tan(halfV) * (maxM - G.camX);
+  o += L(camPx.x, camPx.y, X(maxM), Y(upY), { c: '#5aabff', w: 1.4, d: '6 4' });
+  o += L(camPx.x, camPx.y, X(G.lowX), gy, { c: '#5aabff', w: 1.4, d: '6 4' });
+  o += L(camPx.x, camPx.y, X(maxM), camPx.y, { c: '#6b727c', w: 1, d: '3 5' });
+  o += L(camPx.x, camPx.y, X(G.occX), gy, { c: '#ffb14a', w: 1.6 });
+  o += `</g>`;
+  o += T(RIGHT - 4, camPx.y - 8, 'optical axis → horizon  (v₀ = 0.50 assumes zero pitch)',
+         { anchor: 'end', fs: 12, fill: '#7c838d' });
+
+  /* vertical FOV, labelled on the upper ray rather than with an arc (an arc at any
+     useful radius would cross the bodywork) */
+  const lx = camPx.x + 190 * Math.cos(halfV), ly = camPx.y - 190 * Math.sin(halfV);
+  o += `<circle cx="${lx}" cy="${ly}" r="3" fill="#5aabff"/>`;
+  o += T(lx + 10, ly + 4, `${(halfV * 2 * DEG).toFixed(0)}° vertical field of view`,
+         { fill: '#5aabff', fs: 12.5, weight: 600 });
+
+  /* --- ground scale ticks, measured from the BUMPER --- */
+  for (let m = 0; m <= 22; m++) {
+    const gx = X(r.len + m);
+    if (gx > RIGHT) break;
+    const major = m % 2 === 0;
+    o += L(gx, gy, gx, gy + (major ? 9 : 4), { c: major ? '#4a4a58' : '#2f2f3a' });
+    if (major && m > 0) o += T(gx, gy + 23, `${m}`, { anchor: 'middle', fs: 11.5, fill: '#6b727c' });
+  }
+  o += T(X(r.len), gy + 23, '0', { anchor: 'middle', fs: 11.5, fill: '#8a919b', weight: 600 });
+  o += T(RIGHT, gy + 40, 'metres from the front bumper', { anchor: 'end', fs: 11, fill: '#5c6068' });
+
+  /* ground line */
+  o += L(0, gy, 1040, gy, { c: '#3a3a46', w: 1.5 });
+
+  /* --- the car --- */
+  o += carSVG(r, ox, gy, s, 'A');
+
+  /* --- camera marker --- */
+  o += `<circle cx="${camPx.x}" cy="${camPx.y}" r="11" fill="#5aabff" opacity="0.16"/>
+        <circle cx="${camPx.x}" cy="${camPx.y}" r="4.5" fill="#e8eaed" stroke="#5aabff" stroke-width="2"/>`;
+  o += T(camPx.x - 12, camPx.y - 16, 'lens', { anchor: 'end', fs: 11.5, fill: '#cfd5dd', weight: 600 });
+
+  /* --- dimensions: camera height measured clear of the bodywork --- */
+  const hx = X(r.len) + 26;
+  o += L(camPx.x, camPx.y, hx, camPx.y, { c: '#4a4a58', d: '2 3' });
+  o += dimV(hx, gy, camPx.y, `h = ${f2(r.camH)} m`, { side: 'top' });
+  o += dimH(gy + 46, X(G.camX), X(r.len), `camera → bumper  ${f2(r.bumper)} m`, {});
+  o += L(X(r.len), gy, X(r.len), gy + 52, { c: '#4a4a58', d: '2 3' });
+  o += dimH(gy + 84, X(r.len), X(G.occX), `bonnet blind zone  ${f1(G.blind)} m`, { tc: '#ffb14a', c: '#8a6a30' });
+  o += L(X(G.occX), gy, X(G.occX), gy + 90, { c: '#8a6a30', d: '2 3' });
+
+  /* --- zone labels --- */
+  o += T(X(G.occX) + 12, gy - 14, `first visible road`, { fill: '#7ee07e', fs: 13, weight: 600 });
+  o += T((X(G.lowX) + X(G.occX)) / 2, gy - 16, 'bonnet hides this',
+         { anchor: 'middle', fs: 12, fill: '#c8a86a' });
+
+  $('#svgSide').innerHTML = o;
+
+  /* facts */
+  const rowsLost = (1 - G.edgeRow) * 100;
+  $('#factsRig').innerHTML = [
+    ['camera height', `${f2(r.camH)} m`, 'lens above the road', ''],
+    ['camera → bumper', `${f2(r.bumper)} m`, 'this is where gap = 0', ''],
+    ['bonnet blind zone', `${f1(G.blind)} m`, 'nearest road you can see', 'hl'],
+    ['bottom row of frame', `${f1(G.lowRange - r.bumper)} m`, 'from the bumper, geometrically', ''],
+    ['frame lost to bonnet', `${rowsLost.toFixed(0)}%`, 'lower rows, all bodywork', 'hl'],
+    ['vertical FOV', `${(halfV * 2 * DEG).toFixed(0)}°`, 'after undistortion', '']
+  ].map(([k, v, s2, cls]) =>
+    `<div class="fact"><div class="k">${k}</div><div class="v ${cls}">${v}</div><div class="s">${s2}</div></div>`
+  ).join('');
+
+  $('#rigDesc').innerHTML = `<b style="color:#e8eaed">${r.label.split('—')[0].trim()}</b> · ${r.dims}`;
+
+  const hatch = RIGS.hatch, hg = rigGeom(hatch);
+  const ratio = r.camH / hatch.camH;
+  $('#rigNote').innerHTML = r.measured
+    ? `<b>Read the amber wedge.</b> The camera's cone reaches the road ${f1(G.lowRange - r.bumper)} m ` +
+      `ahead of the bumper, but the bonnet occludes it out to <b>${f1(G.blind)} m</b> — the lower ` +
+      `${rowsLost.toFixed(0)}% of every frame is bodywork, not road. This is why the geometry never ` +
+      `uses the bottom pixel row: it references the horizon and the camera height instead, and the ` +
+      `bumper offset is the only thing that converts "distance from the lens" into "distance from the car." ` +
+      `<br><br>One caveat the drawing exposes: a 1.80 m setback at only 1.30 m of height implies a very ` +
+      `laid-back windscreen. If the real mount is nearer 1.3 m back, every <code>gap_m</code> is being ` +
+      `over-subtracted by about half a metre — which is neither here nor there at 30 m and matters a great ` +
+      `deal at 3 m. Worth a plumb line before the next demo.`
+    : `<b>The blind zone is a wash — the scale is not.</b> A taller mount sees further under its own nose, ` +
+      `but a taller bonnet takes it straight back: ${f1(G.blind)} m here against ${f1(hg.blind)} m for the ` +
+      `hatch. What actually changes is the metres-per-pixel. Route A is ` +
+      `<code>Z = f&middot;h / (v−v₀)</code>, strictly proportional to camera height, so moving the lens from ` +
+      `${f2(hatch.camH)} m to ${f2(r.camH)} m makes every distance read <b>${((ratio - 1) * 100).toFixed(0)}% ` +
+      `longer</b> — a true 8.0 m gap would be reported as ${f1(8 * ratio)} m. Swap cars without re-measuring ` +
+      `<code>cam_h_m</code> and nothing errors; every number is just quietly wrong by the same factor. ` +
+      `Stages 3 and 4 stay pinned to the measured i20 slot, because that is what the recorded footage ` +
+      `was computed with.`;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STAGE 2 — plan view
+   ══════════════════════════════════════════════════════════════════════════ */
+function drawPlan() {
+  const r = RIGS[rigKey], G = rigGeom(r);
+  const s = 24, cx = 520, cy = 428;              // camera origin, forward = up
+  const P = (rng, ang) => [cx + rng * s * Math.sin(ang), cy - rng * s * Math.cos(ang)];
+  const RINGS = [3, 6, 9, 12, 15];
+  const RMAX = RINGS[RINGS.length - 1] + 1.1 + r.bumper;
+  let o = '';
+
+  o += `<rect x="0" y="0" width="1040" height="512" fill="#0b0d12"/>`;
+
+  const wedge = (half, fill, op) => {
+    const [ax, ay] = P(RMAX, -half), [bx, by] = P(RMAX, half);
+    return `<path d="M${cx},${cy} L${ax},${ay} A ${RMAX * s} ${RMAX * s} 0 0 1 ${bx},${by} Z"
+             fill="${fill}" opacity="${op}"/>`;
+  };
+  o += wedge(FISH_HALF_H, '#5aabff', 0.055);
+  o += wedge(halfH, '#5aabff', 0.085);
+  o += wedge(20 / DEG, '#7ee07e', 0.085);
+
+  /* range rings, measured from the bumper — labels ride a ray clear of the lane */
+  const labAng = -38 / DEG;
+  for (const m of RINGS) {
+    const rr = (m + r.bumper) * s;
+    const [ax, ay] = P(m + r.bumper, -FISH_HALF_H), [bx, by] = P(m + r.bumper, FISH_HALF_H);
+    o += `<path d="M${ax},${ay} A ${rr} ${rr} 0 0 1 ${bx},${by}" fill="none"
+           stroke="#33333f" stroke-width="1" stroke-dasharray="4 5"/>`;
+    const [lx, ly] = P(m + r.bumper, labAng);
+    o += `<rect x="${lx - 20}" y="${ly - 9}" width="40" height="17" rx="4" fill="#0b0d12" opacity="0.85"/>`;
+    o += T(lx, ly + 4, `${m} m`, { fs: 11.5, fill: '#8a919b', anchor: 'middle' });
+  }
+
+  /* blind-zone disc */
+  o += `<path d="M${cx},${cy} L${P(G.occRange, -halfH)[0]},${P(G.occRange, -halfH)[1]}
+         A ${G.occRange * s} ${G.occRange * s} 0 0 1 ${P(G.occRange, halfH)[0]},${P(G.occRange, halfH)[1]} Z"
+         fill="#ffb14a" opacity="0.13"/>`;
+  o += T(cx, cy - G.occRange * s / 2 + 4, 'bonnet blind zone', { anchor: 'middle', fs: 11, fill: '#c8a86a' });
+
+  /* lane rails at 3.5 m */
+  for (const sgn of [-1, 1]) {
+    const x = cx + sgn * 1.75 * s;
+    o += L(x, cy - RMAX * s, x, cy, { c: '#3a3a46', d: '7 7' });
+  }
+  o += T(cx - 1.75 * s - 9, cy - RMAX * s + 30, '3.5 m lane', { anchor: 'end', fs: 11.5, fill: '#7c838d' });
+
+  /* a lead car footprint at 9 m for scale */
+  const lz = 9 + r.bumper, lw = 1.8 * s, ll = 4.3 * s;
+  o += `<rect x="${cx - lw / 2}" y="${cy - lz * s - ll / 2}" width="${lw}" height="${ll}" rx="4"
+         fill="#1b2a1c" stroke="#7ee07e" stroke-width="1.4"/>`;
+  o += T(cx + lw / 2 + 10, cy - lz * s + 4, 'lead vehicle · gap 9 m', { fs: 12, fill: '#7ee07e' });
+
+  /* ego footprint, top view */
+  const ew = r.wid * s, front = cy - r.bumper * s, back = cy + (r.len - r.bumper) * s;
+  o += `<rect x="${cx - ew / 2}" y="${front}" width="${ew}" height="${back - front}" rx="6"
+         fill="url(#paintP)" stroke="#8fb7ff" stroke-opacity="0.55" stroke-width="1.2"/>`;
+  /* cabin + wheels so the footprint reads as a car rather than a pill */
+  o += `<rect x="${cx - ew / 2 + 4}" y="${front + (back - front) * 0.30}" width="${ew - 8}"
+         height="${(back - front) * 0.42}" rx="3" fill="#0d1a30" opacity="0.75"/>`;
+  for (const fy of [0.16, 0.80]) for (const sgn of [-1, 1]) {
+    o += `<rect x="${cx + sgn * (ew / 2) - (sgn > 0 ? 3 : 0)}" y="${front + (back - front) * fy}"
+           width="3" height="${(back - front) * 0.14}" fill="#08080a"/>`;
+  }
+  o += `<defs><linearGradient id="paintP" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#1c47b4"/><stop offset="0.5" stop-color="#2f6df0"/>
+          <stop offset="1" stop-color="#5b9bff"/></linearGradient></defs>`;
+  o += L(cx - ew, front, cx + ew, front, { c: '#8a919b', d: '4 3' });
+  o += T(cx - ew - 8, front + 4, 'gap = 0', { anchor: 'end', fs: 11.5, fill: '#c3c9d1', weight: 600 });
+  o += `<circle cx="${cx}" cy="${cy}" r="10" fill="#5aabff" opacity="0.18"/>
+        <circle cx="${cx}" cy="${cy}" r="4" fill="#e8eaed" stroke="#5aabff" stroke-width="1.8"/>`;
+  o += T(cx + ew / 2 + 12, cy + 4, 'lens', { fs: 12, fill: '#cfd5dd' });
+
+  /* wedge labels */
+  const lab = (half, txt, col, rad) => {
+    const [x, y] = P(rad, half);
+    return T(x + (half > 0 ? 9 : -9), y, txt, { anchor: half > 0 ? 'start' : 'end', fs: 12, fill: col, weight: 600 });
+  };
+  o += lab(-FISH_HALF_H, `raw fisheye ≈ 120° H`, '#7c93b0', RMAX * 0.90);
+  o += lab(halfH, `rectilinear ${(halfH * 2 * DEG).toFixed(0)}° H`, '#5aabff', RMAX * 0.96);
+  o += lab(20 / DEG, 'geometry-trusted core ±20°', '#7ee07e', RMAX * 0.76);
+
+  $('#svgPlan').innerHTML = o;
+
+  $('#factsPlan').innerHTML = [
+    ['raw lens', '140°', 'diagonal, equidistant fisheye', ''],
+    ['working frame', `${(halfH * 2 * DEG).toFixed(0)}° × ${(halfV * 2 * DEG).toFixed(0)}°`, 'after undistortion', ''],
+    ['trusted core', '±20°', 'where pinhole math holds', 'ok'],
+    ['lane share at 15 m', `${(2 * Math.atan(1.75 / 15) * DEG).toFixed(0)}°`, 'of a 93° frame', ''],
+    ['distortion model', 'K, D = null', 'no undistortion applied in v1', 'hl']
+  ].map(([k, v, s2, cls]) =>
+    `<div class="fact"><div class="k">${k}</div><div class="v ${cls}">${v}</div><div class="s">${s2}</div></div>`
+  ).join('');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Frame renderer — shared by stage 3 (synthetic) and stage 4 (real boxes)
+   ══════════════════════════════════════════════════════════════════════════ */
+function frameSVG(el, box, opt = {}) {
+  const W = 640, H = 360;
+  const px = u => u * W, py = v => v * H;
+  const vp = { x: px(0.5), y: py(opt.trueHorizon ?? CAL.v0) };
+  let o = '';
+
+  o += `<defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141d2e"/><stop offset="1" stop-color="#243248"/></linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b1d22"/><stop offset="1" stop-color="#0e0f12"/></linearGradient>
+  </defs>`;
+  o += `<rect x="0" y="0" width="${W}" height="${vp.y}" fill="url(#sky)"/>`;
+  o += `<rect x="0" y="${vp.y}" width="${W}" height="${H - vp.y}" fill="url(#road)"/>`;
+
+  /* road edges + lane dashes converging on the vanishing point */
+  for (const sgn of [-1, 1]) {
+    o += L(vp.x + sgn * W * 0.62, H, vp.x, vp.y, { c: '#31343c', w: 1.4 });
+  }
+  o += L(vp.x, H, vp.x, vp.y, { c: '#2a2d34', w: 1, d: '14 20' });
+
+  /* Horizon and contact rows can land within a few pixels of each other, so their
+     left-edge labels are collected and pushed apart before being drawn. */
+  const rowLabels = [];
+  o += L(0, py(CAL.v0), W, py(CAL.v0), { c: '#8a919b', w: 1.2, d: '6 5' });
+  rowLabels.push({ y: py(CAL.v0), txt: `v₀ = 0.50  assumed horizon`, fill: '#a8aeb7', c: '#8a919b' });
+  if (opt.trueHorizon != null && Math.abs(opt.trueHorizon - CAL.v0) > 0.002) {
+    o += L(0, py(opt.trueHorizon), W, py(opt.trueHorizon), { c: '#ff6b6b', w: 1.2, d: '6 5' });
+    rowLabels.push({ y: py(opt.trueHorizon), txt: `true horizon ${f3(opt.trueHorizon)}`,
+                     fill: '#ff8f8f', c: '#ff6b6b' });
+  }
+
+  /* bonnet band */
+  if (opt.bonnetRow != null && opt.bonnetRow < 1) {
+    const by = py(opt.bonnetRow);
+    o += `<path d="M0,${by + 14} C ${W * 0.25},${by - 6} ${W * 0.75},${by - 6} ${W},${by + 14} L ${W},${H} L 0,${H} Z"
+           fill="#0a0b0e" stroke="#2b2d34" stroke-width="1"/>`;
+    o += T(W - 12, H - 13, 'bonnet — never used by the geometry',
+           { anchor: 'end', fs: 13.5, fill: '#61666f' });
+  }
+
+  /* the detection box */
+  if (box) {
+    const { x1, y1, x2, y2, cls, clipped } = box;
+    const col = cls === 'person' ? '#ffb14a' : '#7ee07e';
+    const bx = px(x1), by = py(y1), bw = px(x2 - x1), bh = py(y2 - y1);
+    o += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" fill="${col}" opacity="0.07"/>`;
+    o += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" fill="none"
+           stroke="${clipped ? '#ff6b6b' : col}" stroke-width="${opt.thick ? 3 : 2}"/>`;
+
+    /* contact point + the row it lands on */
+    const ux = px((x1 + x2) / 2);
+    o += L(0, py(y2), W, py(y2), { c: col, w: 1, d: '2 4' });
+    o += `<circle cx="${ux}" cy="${py(y2)}" r="5" fill="${col}"/>`;
+    o += `<circle cx="${ux}" cy="${py(y2)}" r="10" fill="none" stroke="${col}" stroke-width="1.2" opacity="0.5"/>`;
+    rowLabels.push({ y: py(y2), txt: `v_n = ${f3(y2)}`, fill: col, c: col, weight: 600 });
+
+    /* width bracket */
+    const wy = Math.min(H - 22, py(y2) + 20);
+    o += L(bx, wy, bx + bw, wy, { c: col, w: 1.6 });
+    o += L(bx, wy - 5, bx, wy + 5, { c: col, w: 1.6 });
+    o += L(bx + bw, wy - 5, bx + bw, wy + 5, { c: col, w: 1.6 });
+    o += T(ux, wy + 18, `w_n = ${f3(x2 - x1)}`, { anchor: 'middle', fs: 14, fill: col, weight: 600, mono: 1 });
+
+    if (opt.label) {
+      const lw = Math.max(112, opt.label.length * 8.6);
+      /* keep the chip clear of the left-edge row labels, and inside the frame */
+      const lx = Math.min(W - lw - 4, bx < 268 ? bx + bw + 8 : bx);
+      const ly = Math.max(2, by - 26);
+      o += `<rect x="${lx}" y="${ly}" width="${lw}" height="23" rx="5" fill="rgba(0,0,0,.78)"/>`;
+      o += T(lx + 8, ly + 16.5, opt.label, { fs: 14, fill: '#e8eaed', weight: 600, mono: 1 });
+    }
+    if (clipped) o += T(W - 9, 22, 'box truncated at frame edge — width route unreliable',
+                        { anchor: 'end', fs: 13, fill: '#ff8f8f', weight: 600 });
+  }
+
+  /* resolve the left-edge label stack: each keeps a colour swatch tying it to its row */
+  rowLabels.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < rowLabels.length; i++) {
+    if (rowLabels[i].y - rowLabels[i - 1].y < 19) rowLabels[i].y = rowLabels[i - 1].y + 19;
+  }
+  for (const r of rowLabels) {
+    const w = 22 + r.txt.length * 7.8;
+    o += `<rect x="6" y="${r.y - 15}" width="${w}" height="20" rx="4" fill="rgba(6,8,12,.82)"/>`;
+    o += L(11, r.y - 5, 22, r.y - 5, { c: r.c, w: 2.5 });
+    o += T(27, r.y, r.txt, { fs: 14, fill: r.fill, weight: r.weight || 400, mono: 1 });
+  }
+
+  o += `<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" fill="none" stroke="#262630"/>`;
+  el.innerHTML = o;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STAGE 3 — synthetic frame + the arithmetic
+   ══════════════════════════════════════════════════════════════════════════ */
+function drawStage3() {
+  const gap = +$('#cGap').value, lat = +$('#cLat').value, cls = $('#cCls').value;
+  const Wtrue = +$('#cW').value, pitch = +$('#cPitch').value / DEG, conf = +$('#cConf').value;
+  const rig = RIGS.hatch, G = rigGeom(rig);          // stage 3+ is pinned to the measured slot
+  const Z = gap + CAL.bumper;                        // true range from the lens
+  const Hobj = OBJ_H[cls] || 1.5;
+
+  /* project the true object with the true (pitched) camera */
+  const row = h => CAL.v0 + (CAL.f_px / CAL.nh) * Math.tan(Math.atan((CAL.cam_h - h) / Z) - pitch);
+  const y2 = row(0), y1 = row(Hobj);
+  const half = (CAL.f_px / CAL.nw) * (Wtrue / 2) / Z;
+  const uc = 0.5 + (CAL.f_px / CAL.nw) * (lat / Z);
+  let x1 = uc - half, x2 = uc + half;
+  const clipped = x1 < 0.002 || x2 > 0.998;
+  x1 = Math.max(0, x1); x2 = Math.min(1, x2);
+  const trueHorizon = CAL.v0 - (CAL.f_px / CAL.nh) * Math.tan(pitch);
+
+  $('#oGap').textContent = f2(gap) + ' m';
+  $('#oLat').textContent = (lat > 0 ? '+' : '') + f1(lat) + ' m';
+  $('#oW').textContent = f2(Wtrue) + ' m';
+  $('#oPitch').textContent = (pitch >= 0 ? '+' : '') + (pitch * DEG).toFixed(2) + '°';
+  $('#oConf').textContent = f2(conf);
+
+  const est = estimateBox(cls, conf, x1, y1, x2, y2);
+
+  frameSVG($('#svgFrame'),
+    { x1, y1, x2, y2, cls, clipped },
+    { bonnetRow: G.edgeRow, trueHorizon,
+      label: est ? `${cls}  ${f2(est.gap)} m  conf ${f2(est.conf)}` : `${cls}  no reading` });
+
+  /* ---- the arithmetic: formula on one line, substitution on the next ---- */
+  const N = v => `<span class="num">${v}</span>`;
+  const pad = '<span class="lbl">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>';
+  const frow = (k, body) => `<div><span class="lbl">${k.padEnd(9, ' ').replace(/ /g, '&nbsp;')}</span>${body}</div>`;
+  let fx = '';
+  if (!est) {
+    fx = `<div class="lbl">no route yields a plausible reading → this box has no distance this frame</div>`;
+  } else {
+    const errA = est.zg != null ? (est.zg - Z) / Z * 100 : null;
+    const errB = est.zw != null ? (est.zw - Z) / Z * 100 : null;
+    const cA = errA != null && Math.abs(errA) > 12 ? 'bad' : 'num';
+    const cB = errB != null && Math.abs(errB) > 12 ? 'bad' : 'num';
+    const pct = e => e == null ? '' : `<span class="lbl">&nbsp;&nbsp;(${e >= 0 ? '+' : ''}${e.toFixed(1)}%)</span>`;
+
+    fx += frow('inputs', `v_n = <b>${f3(y2)}</b>&nbsp;&nbsp;&nbsp;w_n = <b>${f3(x2 - x1)}</b>` +
+                        `&nbsp;&nbsp;&nbsp;conf = <b>${f2(conf)}</b>`) + '<hr>';
+    fx += est.zg != null
+      ? frow('A ground', `Z = f_ny·h / (v_n − v₀)`) +
+        `<div>${pad}= ${N(f3(CAL.fny))}·${N(f2(CAL.cam_h))} / (${N(f3(y2))}−${N('0.500')}) ` +
+        `= <span class="${cA}">${f2(est.zg)} m</span>${pct(errA)}</div>`
+      : frow('A ground', `<span class="warnv">abstains</span> — contact point is above the horizon`);
+    fx += est.zw != null
+      ? frow('B width', `Z = f_nx·W / w_n`) +
+        `<div>${pad}= ${N(f3(CAL.fnx))}·${N(f2(CAL.class_width_m[cls]))} / ${N(f3(est.wn))} ` +
+        `= <span class="${cB}">${f2(est.zw)} m</span>${pct(errB)}</div>`
+      : frow('B width', `<span class="warnv">abstains</span> — no known width for this class`);
+    fx += '<hr>';
+    fx += frow('weights', `w_A = min(1,(v_n−v₀)/0.20)·conf = <b>${f2(est.wg)}</b>`);
+    fx += `<div>${pad}w_B = rel·conf = ${N(f2(CAL.class_rel[cls]))}·${N(f2(conf))} = <b>${f2(est.ww)}</b></div>`;
+    fx += frow('fused', `Z = Σ(Z·w)/Σw = <b>${f2(est.z)} m</b>`);
+    fx += frow('', `<span class="lbl">agreement</span> ${est.agree != null ? f2(est.agree) : '—'}` +
+                  `&nbsp;&nbsp;→&nbsp;&nbsp;<span class="lbl">conf</span> <b>${f2(est.conf)}</b>`);
+    fx += frow('gap', `Z − ${N('1.80')} = <b style="font-size:14.5px">${f2(est.gap)} m</b>`);
+    fx += frow('', `<span class="lbl">measured from the front bumper</span>`);
+  }
+  $('#fxA').innerHTML = fx;
+
+  /* ---- routes bar ---- */
+  drawRoutes(est, Z);
+
+  /* ---- side ray strip ---- */
+  drawRay(rig, G, Z, est);
+
+  /* ---- note ---- */
+  let note = '';
+  if (clipped) {
+    note = `<b>That red box is a real failure mode.</b> When a vehicle runs off the edge of the frame ` +
+      `its width is truncated, so Route B reads it as narrower — and therefore farther — than it is. ` +
+      `This exact artefact shows up in the corpus on overtaken vehicles at the right edge, which is why ` +
+      `the demo track in stage 4 was picked from the frame centre.`;
+  } else if (Math.abs(pitch * DEG) > 0.3) {
+    const errA = (est && est.zg != null) ? (est.zg - Z) / Z * 100 : 0;
+    note = `<b>A ${Math.abs(pitch * DEG).toFixed(2)}° mounting error costs Route A ${Math.abs(errA).toFixed(0)}%.</b> ` +
+      `The code assumes the horizon sits exactly at <code>v₀ = 0.50</code>. Tilt the camera and the true ` +
+      `horizon (red) walks away from the assumed one, and every ground-plane distance inherits the error — ` +
+      `the single biggest error source in the current calibration. Note that Route B does not care: box ` +
+      `width is unaffected by pitch. That is the whole argument for fusing two routes instead of trusting one.`;
+  } else if (Math.abs(Wtrue - CAL.class_width_m[cls]) > 0.12) {
+    const errB = (est && est.zw != null) ? (est.zw - Z) / Z * 100 : 0;
+    note = `<b>Route B is only as good as the assumed width.</b> This object is really ${f2(Wtrue)} m wide but ` +
+      `the class table says ${f2(CAL.class_width_m[cls])} m, so Route B is off by ${errB.toFixed(0)}%. Real ` +
+      `widths vary ±10–15% inside a class, which is why <code>class_width_reliability</code> exists: a car ` +
+      `scores 0.85, a motorcycle 0.50, a person 0.40.`;
+  } else {
+    note = `<b>Both routes agree, so confidence climbs.</b> With a clean contact point well below the ` +
+      `horizon and a plausible width, the two independent estimates land within a few percent of each ` +
+      `other and the agreement bonus lifts confidence to ${est ? f2(est.conf) : '—'}. Push the pitch or ` +
+      `width sliders to break one route and watch the other hold the answer up.`;
+  }
+  $('#fxNote').innerHTML = note;
+}
+
+function drawRoutes(est, Ztrue) {
+  const W = 460, H = 132, x0 = 58, x1 = W - 24;
+  const zmax = Math.max(Ztrue, est && est.zg ? est.zg : 0, est && est.zw ? est.zw : 0) * 1.15 + 1;
+  const X = z => x0 + (z / zmax) * (x1 - x0);
+  let o = `<rect x="0" y="0" width="${W}" height="${H}" fill="#0c0c0f"/>`;
+
+  /* axis */
+  o += L(x0, H - 26, x1, H - 26, { c: '#33333f' });
+  for (let z = 0; z <= zmax; z += zmax > 24 ? 10 : 5) {
+    o += L(X(z), H - 26, X(z), H - 22, { c: '#33333f' });
+    o += T(X(z), H - 10, `${z.toFixed(0)}`, { anchor: 'middle', fs: 10, fill: '#5c6068' });
+  }
+
+  /* truth marker */
+  o += L(X(Ztrue), 8, X(Ztrue), H - 26, { c: '#8a919b', w: 1, d: '3 3' });
+  o += T(X(Ztrue), 7, 'truth', { anchor: 'middle', fs: 10, fill: '#8a919b' });
+
+  const rows = [
+    ['A ground', est && est.zg, est && est.wg, '#5aabff'],
+    ['B width', est && est.zw, est && est.ww, '#ffb14a'],
+    ['fused', est && est.z, est && est.wsum, '#7ee07e']
+  ];
+  rows.forEach(([lab, z, w, col], i) => {
+    const y = 30 + i * 26;
+    o += T(x0 - 8, y + 4, lab, { anchor: 'end', fs: 11, fill: col, weight: 600 });
+    if (z == null || !isFinite(z)) { o += T(x0 + 6, y + 4, 'abstains', { fs: 11, fill: '#5c6068' }); return; }
+    o += L(x0, y, X(z), y, { c: col, w: i === 2 ? 3.5 : 2, cap: 'round' });
+    o += `<circle cx="${X(z)}" cy="${y}" r="${i === 2 ? 5 : 4}" fill="${col}"/>`;
+    o += T(X(z) + 9, y + 4, `${f2(z)}`, { fs: 11, fill: '#c3c9d1', weight: 600, mono: 1 });
+  });
+  $('#svgRoutes').innerHTML = o;
+}
+
+function drawRay(rig, G, Z, est) {
+  const W = 1040, H = 186, gy = 128, s = 26.5, ox = 34;
+  const X = m => ox + m * s, Y = m => gy - m * s;
+  let o = `<rect x="0" y="0" width="${W}" height="${H}" fill="#0b0d12"/>`;
+
+  const camX = G.camX, camPx = { x: X(camX), y: Y(G.camY) };
+  const objX = camX + Z;
+
+  /* ground + ticks, numbered from the bumper */
+  o += L(0, gy, W, gy, { c: '#3a3a46', w: 1.4 });
+  for (let m = 0; m <= 32; m += 2) {
+    const gx = X(rig.len + m);
+    if (gx > W - 8) break;
+    const major = m % 10 === 0;
+    o += L(gx, gy, gx, gy + (major ? 8 : 4), { c: major ? '#4a4a58' : '#2f2f3a' });
+    if (major) o += T(gx, gy + 21, `${m} m`, { anchor: 'middle', fs: 11.5, fill: '#6b727c' });
+  }
+
+  /* blind zone + visible road */
+  o += `<rect x="${X(rig.len)}" y="${gy - 3}" width="${X(G.occX) - X(rig.len)}" height="6"
+         fill="#ffb14a" opacity="0.28"/>`;
+  o += `<rect x="${X(G.occX)}" y="${gy - 2}" width="${Math.min(W, X(objX)) - X(G.occX)}" height="4"
+         fill="#7ee07e" opacity="0.35"/>`;
+
+  /* the sight ray */
+  if (X(objX) < W - 6) {
+    o += L(camPx.x, camPx.y, X(objX), gy, { c: '#5aabff', w: 1.6 });
+    o += L(camPx.x, camPx.y, Math.min(W - 6, X(objX) + 60), camPx.y, { c: '#6b727c', w: 1, d: '3 5' });
+    /* the object as a simple silhouette */
+    const ow = 4.3 * s, oh = 1.5 * s;
+    o += `<rect x="${X(objX) - ow * 0.5}" y="${gy - oh}" width="${ow}" height="${oh}" rx="4"
+           fill="#16241a" stroke="#7ee07e" stroke-width="1.6"/>`;
+    o += `<circle cx="${X(objX)}" cy="${gy}" r="4.5" fill="#7ee07e"/>`;
+    o += T(X(objX) + ow * 0.5 + 10, gy - oh / 2, `contact point`, { fs: 12, fill: '#7ee07e', weight: 600 });
+  }
+
+  o += carSVG(rig, ox, gy, s, 'R');
+  o += `<circle cx="${camPx.x}" cy="${camPx.y}" r="8" fill="#5aabff" opacity="0.18"/>
+        <circle cx="${camPx.x}" cy="${camPx.y}" r="3.4" fill="#e8eaed" stroke="#5aabff" stroke-width="1.6"/>`;
+
+  /* dimensions: true Z from the lens, true gap from the bumper — plus a ghost
+     showing where the estimate puts the object when the two disagree. */
+  if (X(objX) < W - 6 && est) {
+    const trueGap = Z - CAL.bumper;
+    o += dimH(28, camPx.x, X(objX), `Z = ${f2(Z)} m  from the lens`, { c: '#4a4a58', tc: '#8a919b', fs: 12 });
+    o += dimH(gy + 46, X(rig.len), X(objX), `gap = ${f2(trueGap)} m  from the bumper`,
+              { c: '#3f6b41', tc: '#7ee07e', fs: 13 });
+    o += L(X(rig.len), gy, X(rig.len), gy + 52, { c: '#3f6b41', d: '2 3' });
+    o += L(X(objX), gy, X(objX), gy + 52, { c: '#3f6b41', d: '2 3' });
+    o += L(camPx.x, camPx.y, camPx.x, 22, { c: '#4a4a58', d: '2 3' });
+    o += L(X(objX), gy - 1.5 * s, X(objX), 22, { c: '#4a4a58', d: '2 3' });
+
+    const objE = G.camX + est.z;
+    if (Math.abs(est.z - Z) > 0.3 && X(objE) > X(rig.len) && X(objE) < W - 6) {
+      const ow = 4.3 * s, oh = 1.5 * s;
+      o += `<rect x="${X(objE) - ow * 0.5}" y="${gy - oh}" width="${ow}" height="${oh}" rx="4"
+             fill="none" stroke="#ff6b6b" stroke-width="1.4" stroke-dasharray="5 4"/>`;
+      o += L(X(objE), gy - oh, X(objE), 66, { c: '#7a2b30', d: '2 3' });
+      o += T(X(objE), 60, `estimate says ${f2(est.gap)} m`,
+             { anchor: 'middle', fs: 11.5, fill: '#ff8f8f', weight: 600 });
+    }
+  }
+  $('#svgRay').innerHTML = o;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STAGE 4 — real track: 124 boxes, track_id 351, class car
+   [frame, conf, x1, y1, x2, y2]
+   ══════════════════════════════════════════════════════════════════════════ */
+const TRACK = [[47232,0.383,0.4618,0.5128,0.5167,0.5846],[47233,0.495,0.4621,0.5139,0.5171,0.5858],[47234,0.671,0.4614,0.5147,0.5169,0.5861],[47235,0.388,0.4614,0.5168,0.5163,0.5869],[47236,0.582,0.4597,0.517,0.5162,0.5895],[47237,0.68,0.4592,0.5186,0.5151,0.5906],[47238,0.63,0.459,0.5191,0.5152,0.5919],[47239,0.753,0.4578,0.5196,0.515,0.5932],[47240,0.738,0.4571,0.5197,0.5145,0.5929],[47241,0.734,0.4566,0.5201,0.5142,0.5941],[47242,0.785,0.4558,0.5206,0.5158,0.5958],[47243,0.75,0.456,0.5252,0.5141,0.6003],[47244,0.553,0.4547,0.5288,0.5144,0.6048],[47245,0.646,0.4545,0.5307,0.5147,0.6071],[47247,0.705,0.4546,0.5349,0.5138,0.6162],[47248,0.847,0.4522,0.5389,0.5128,0.6197],[47249,0.832,0.4524,0.5421,0.5135,0.6226],[47250,0.817,0.4526,0.5448,0.5134,0.6269],[47251,0.864,0.4513,0.5474,0.5119,0.6302],[47252,0.835,0.4507,0.5509,0.5127,0.6353],[47253,0.877,0.4509,0.5529,0.513,0.6366],[47254,0.853,0.4506,0.5534,0.5127,0.6377],[47255,0.87,0.4485,0.5511,0.5113,0.6372],[47256,0.874,0.4476,0.5479,0.5111,0.6345],[47257,0.879,0.446,0.5461,0.5112,0.6313],[47258,0.852,0.4457,0.5413,0.5117,0.6302],[47259,0.876,0.4455,0.539,0.511,0.6292],[47260,0.857,0.4449,0.5375,0.5111,0.6286],[47261,0.852,0.4447,0.5353,0.5113,0.6269],[47262,0.877,0.4429,0.5334,0.5109,0.6269],[47263,0.882,0.4427,0.5315,0.51,0.6257],[47264,0.876,0.4421,0.5318,0.5101,0.6265],[47265,0.878,0.441,0.5312,0.5102,0.628],[47266,0.875,0.4384,0.5305,0.5083,0.6254],[47267,0.882,0.4361,0.5312,0.5082,0.6281],[47268,0.867,0.4345,0.5333,0.5088,0.6281],[47269,0.885,0.433,0.5355,0.507,0.6326],[47270,0.859,0.432,0.54,0.508,0.6386],[47271,0.853,0.4319,0.5452,0.5053,0.6437],[47272,0.884,0.4309,0.5514,0.507,0.6533],[47273,0.891,0.4304,0.556,0.5061,0.6578],[47274,0.871,0.4291,0.5609,0.5081,0.6633],[47275,0.868,0.4291,0.5649,0.5063,0.6701],[47276,0.841,0.4288,0.5687,0.5066,0.6746],[47277,0.887,0.4264,0.5726,0.5054,0.6764],[47278,0.827,0.4263,0.5764,0.5059,0.6817],[47279,0.852,0.4253,0.5764,0.5056,0.682],[47280,0.869,0.4241,0.5765,0.5037,0.682],[47281,0.899,0.4228,0.572,0.5033,0.68],[47282,0.891,0.4219,0.569,0.5028,0.6761],[47283,0.906,0.4209,0.5661,0.5028,0.6735],[47284,0.919,0.4196,0.5621,0.5028,0.6715],[47285,0.917,0.4193,0.5594,0.5031,0.6695],[47286,0.915,0.418,0.5573,0.5028,0.6687],[47287,0.904,0.4165,0.5561,0.5025,0.669],[47288,0.913,0.4146,0.5564,0.5024,0.6686],[47289,0.896,0.4146,0.5558,0.503,0.6655],[47290,0.863,0.4122,0.5543,0.5048,0.6648],[47291,0.81,0.4114,0.5513,0.5054,0.6619],[47292,0.881,0.4099,0.5503,0.5029,0.6638],[47293,0.872,0.4088,0.5489,0.5027,0.6632],[47294,0.889,0.4074,0.5479,0.5013,0.6656],[47295,0.888,0.4067,0.547,0.5009,0.6661],[47296,0.886,0.4053,0.5471,0.4975,0.6665],[47297,0.889,0.4041,0.5489,0.498,0.6646],[47298,0.883,0.4038,0.5496,0.4976,0.6674],[47299,0.88,0.4011,0.5524,0.4965,0.6681],[47300,0.865,0.3998,0.5543,0.4959,0.6746],[47301,0.886,0.3985,0.5552,0.4967,0.6802],[47302,0.887,0.397,0.5553,0.4962,0.6812],[47303,0.9,0.3943,0.5547,0.4952,0.6827],[47304,0.911,0.3933,0.5549,0.4927,0.6847],[47305,0.887,0.3909,0.5551,0.4932,0.6826],[47306,0.893,0.3895,0.5568,0.4926,0.6855],[47307,0.911,0.3876,0.5586,0.491,0.6917],[47308,0.909,0.3863,0.5608,0.4899,0.6914],[47309,0.911,0.3834,0.5639,0.4891,0.701],[47310,0.904,0.3823,0.5668,0.4892,0.7031],[47311,0.907,0.3812,0.5682,0.4892,0.7055],[47312,0.882,0.3801,0.5684,0.4903,0.7076],[47313,0.858,0.3771,0.5683,0.4898,0.7066],[47314,0.876,0.3741,0.5671,0.4872,0.7073],[47315,0.864,0.3728,0.5635,0.4856,0.7102],[47316,0.901,0.3697,0.5622,0.4833,0.7094],[47317,0.919,0.3664,0.5591,0.4823,0.7077],[47318,0.761,0.3654,0.5571,0.482,0.7043],[47319,0.9,0.3618,0.5553,0.4809,0.7068],[47320,0.903,0.3597,0.5553,0.48,0.7082],[47321,0.907,0.3582,0.5552,0.4804,0.7087],[47322,0.909,0.3558,0.5551,0.4782,0.7096],[47323,0.917,0.3539,0.5545,0.4775,0.7139],[47324,0.917,0.3523,0.5528,0.4769,0.7129],[47325,0.921,0.3495,0.551,0.4768,0.7155],[47326,0.922,0.346,0.5468,0.477,0.7179],[47327,0.919,0.3446,0.5435,0.4755,0.7145],[47328,0.919,0.343,0.5399,0.474,0.7125],[47329,0.915,0.3388,0.5367,0.4731,0.7093],[47330,0.925,0.3342,0.534,0.4721,0.7093],[47331,0.907,0.3311,0.5295,0.4707,0.7084],[47332,0.906,0.3273,0.5263,0.4693,0.7088],[47333,0.902,0.3237,0.5261,0.4681,0.7124],[47334,0.902,0.3214,0.5254,0.4666,0.7135],[47335,0.884,0.3175,0.5253,0.465,0.7155],[47336,0.896,0.3151,0.528,0.4626,0.721],[47337,0.901,0.3105,0.5298,0.4622,0.7253],[47338,0.891,0.3074,0.5317,0.4611,0.7285],[47339,0.911,0.3041,0.5314,0.4603,0.7305],[47340,0.908,0.3008,0.5284,0.4582,0.726],[47341,0.899,0.2972,0.5261,0.4559,0.7308],[47342,0.89,0.2932,0.5216,0.4555,0.7331],[47343,0.895,0.2893,0.5196,0.4546,0.7302],[47344,0.91,0.2851,0.5165,0.4523,0.728],[47345,0.906,0.2822,0.5166,0.4503,0.7256],[47346,0.913,0.2787,0.5167,0.45,0.7281],[47347,0.906,0.2734,0.5175,0.4498,0.732],[47348,0.891,0.2704,0.5204,0.4497,0.732],[47349,0.895,0.2669,0.5247,0.4475,0.7512],[47350,0.861,0.262,0.5317,0.4464,0.7607],[47351,0.888,0.2581,0.5395,0.4446,0.7684],[47352,0.875,0.252,0.5464,0.4436,0.7884],[47353,0.792,0.2477,0.5492,0.4404,0.798],[47354,0.818,0.2425,0.5498,0.4386,0.8019],[47355,0.852,0.235,0.5492,0.4375,0.8049],[47356,0.847,0.2313,0.5468,0.436,0.8063]];
+const TRACK_META = { stem: 'Pune to Velhe Trip Dashcam video (silent, trimmed) (part 6 of 11) [+2h52m]',
+                     id: 351, cls: 'car', fps: 30.0, stride: 1 };
+const DT = TRACK_META.stride / TRACK_META.fps;
+
+/* Per-frame estimates, then the temporal channels — a port of temporal_for_track(). */
+const SER = TRACK.map(([fi, conf, x1, y1, x2, y2]) => {
+  const e = estimateBox(TRACK_META.cls, conf, x1, y1, x2, y2);
+  return { fi, conf, x1, y1, x2, y2, e, area: Math.max(1e-9, (x2 - x1) * (y2 - y1)) };
+});
+
+function rollingMedian(a, win) {
+  const half = win >> 1;
+  return a.map((_, i) => {
+    const s = a.slice(Math.max(0, i - half), Math.min(a.length, i + half + 1)).slice().sort((p, q) => p - q);
+    const n = s.length;
+    return n % 2 ? s[(n - 1) >> 1] : (s[n / 2 - 1] + s[n / 2]) / 2;
+  });
+}
+function slope(xs, ys) {                       // least-squares slope, like np.polyfit(...,1)[0]
+  const n = xs.length, mx = xs.reduce((a, b) => a + b) / n, my = ys.reduce((a, b) => a + b) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) { num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) ** 2; }
+  return den === 0 ? 0 : num / den;
+}
+
+const Zraw = SER.map(s => s.e.z);
+const Zsm = rollingMedian(Zraw, SMOOTH_WIN);
+const lnA = SER.map(s => Math.log(s.area));
+const FI = SER.map(s => s.fi);
+const half = SLOPE_WIN >> 1;
+const TEMP = SER.map((s, i) => {
+  const lo = Math.max(0, i - half), hi = Math.min(SER.length, i + half + 1);
+  if (hi - lo < 4) return { v: null, ttc: null, ttcSi: null };
+  const xs = FI.slice(lo, hi);
+  const vClose = -slope(xs, Zsm.slice(lo, hi)) / DT;
+  const sa = slope(xs, lnA.slice(lo, hi)) / DT;
+  return {
+    v: vClose,
+    ttc: vClose > MIN_CLOSING ? Zsm[i] / vClose : null,
+    ttcSi: sa > 1e-4 ? 2.0 / sa : null
+  };
+});
+/* Per-track summary — the four fields make_distances.py actually persists.
+   Note it is a minimum over the WHOLE track, not the first threshold crossing. */
+const SUM = (() => {
+  let minTtc = null, ttcIdx = -1, minSi = null;
+  TEMP.forEach((t, i) => {
+    if (t.ttc != null && t.ttc > 0 && (minTtc == null || t.ttc < minTtc)) { minTtc = t.ttc; ttcIdx = i; }
+    if (t.ttcSi != null && t.ttcSi > 0 && (minSi == null || t.ttcSi < minSi)) minSi = t.ttcSi;
+  });
+  return {
+    minTtc, ttcIdx, minSi,
+    minGap: Math.min(...SER.map(s => s.e.gap)),
+    ttcFrame: ttcIdx >= 0 ? SER[ttcIdx].fi : null
+  };
+})();
+/* The viewer raises its near-miss banner when the track's minimum TTC breaches the
+   threshold AND the playhead is within TTC_FRAME_WIN frames of where it happened. */
+const bannerOn = i => SUM.minTtc != null && SUM.minTtc < TTC_NEARMISS &&
+                      Math.abs(SER[i].fi - SUM.ttcFrame) <= TTC_FRAME_WIN;
+/* An earlier spike the metric channel produces on noise, which the scale-free
+   channel contradicts — and which this design deliberately does not fire on. */
+const spikeIdx = TEMP.findIndex((t, i) =>
+  t.ttc != null && t.ttc < TTC_NEARMISS &&
+  Math.abs(SER[i].fi - SUM.ttcFrame) > TTC_FRAME_WIN &&
+  t.ttcSi != null && t.ttcSi > 2 * t.ttc);
+
+let idx = 0, playing = false, lastT = 0, acc = 0;
+
+function drawChart() {
+  const W = 500, H = 178, x0 = 40, x1 = W - 12, y0 = 14, y1 = H - 26;
+  const tmax = (FI[FI.length - 1] - FI[0]) * DT;
+  const gmax = Math.ceil(Math.max(...Zraw) - CAL.bumper) + 1;
+  const X = t => x0 + (t / tmax) * (x1 - x0);
+  const Y = g => y1 - (g / gmax) * (y1 - y0);
+  const tOf = i => (FI[i] - FI[0]) * DT;
+  let o = `<rect x="0" y="0" width="${W}" height="${H}" fill="#0c0c0f"/>`;
+
+  for (let g = 0; g <= gmax; g += 2) {
+    o += L(x0, Y(g), x1, Y(g), { c: '#1e1e26' });
+    o += T(x0 - 7, Y(g) + 3.5, `${g}`, { anchor: 'end', fs: 10, fill: '#5c6068' });
+  }
+  for (let t = 0; t <= tmax; t += 1) {
+    o += L(X(t), y1, X(t), y1 + 4, { c: '#33333f' });
+    o += T(X(t), y1 + 17, `${t}s`, { anchor: 'middle', fs: 10, fill: '#5c6068' });
+  }
+
+  const path = (vals, col, w, op) => {
+    let d = '';
+    vals.forEach((g, i) => { d += `${i ? 'L' : 'M'}${X(tOf(i)).toFixed(1)},${Y(g).toFixed(1)}`; });
+    return `<path d="${d}" fill="none" stroke="${col}" stroke-width="${w}" opacity="${op}"/>`;
+  };
+  o += path(Zraw.map(z => z - CAL.bumper), '#8a919b', 1, 0.75);
+  o += path(Zsm.map(z => z - CAL.bumper), '#7ee07e', 2.2, 1);
+
+  if (SUM.ttcIdx >= 0) {
+    o += L(X(tOf(SUM.ttcIdx)), y0, X(tOf(SUM.ttcIdx)), y1, { c: '#ff6b6b', w: 1, d: '4 4' });
+    o += T(X(tOf(SUM.ttcIdx)) - 6, y0 + 10, 'closest approach', { anchor: 'end', fs: 10, fill: '#ff8f8f' });
+  }
+  const px = X(tOf(idx)), pg = Zsm[idx] - CAL.bumper;
+  o += L(px, y0, px, y1, { c: '#e8eaed', w: 1, d: '2 3' });
+  o += `<circle cx="${px}" cy="${Y(pg)}" r="4.5" fill="#7ee07e" stroke="#0c0c0f" stroke-width="1.5"/>`;
+  o += T(x0 + 4, y0 + 8, `${f2(pg)} m`, { fs: 12, fill: '#7ee07e', weight: 600, mono: 1 });
+  $('#svgChart').innerHTML = o;
+}
+
+function drawTtc() {
+  const W = 500, H = 150, x0 = 40, x1 = W - 12, y0 = 12, y1 = H - 26;
+  const tmax = (FI[FI.length - 1] - FI[0]) * DT;
+  const tOf = i => (FI[i] - FI[0]) * DT;
+  const tcap = 8;
+  const X = t => x0 + (t / tmax) * (x1 - x0);
+  const Y = v => y1 - (Math.min(v, tcap) / tcap) * (y1 - y0);
+  let o = `<rect x="0" y="0" width="${W}" height="${H}" fill="#0c0c0f"/>`;
+
+  for (let v = 0; v <= tcap; v += 2) {
+    o += L(x0, Y(v), x1, Y(v), { c: '#1e1e26' });
+    o += T(x0 - 7, Y(v) + 3.5, `${v}`, { anchor: 'end', fs: 10, fill: '#5c6068' });
+  }
+  /* threshold bands */
+  o += `<rect x="${x0}" y="${Y(TTC_CAUTION)}" width="${x1 - x0}" height="${Y(TTC_NEARMISS) - Y(TTC_CAUTION)}"
+         fill="#ffb14a" opacity="0.07"/>`;
+  o += `<rect x="${x0}" y="${Y(TTC_NEARMISS)}" width="${x1 - x0}" height="${y1 - Y(TTC_NEARMISS)}"
+         fill="#ff6b6b" opacity="0.09"/>`;
+  o += L(x0, Y(TTC_CAUTION), x1, Y(TTC_CAUTION), { c: '#8a6a30', d: '4 4' });
+  o += T(x0 + 4, Y(TTC_CAUTION) - 5, 'caution 2.5 s', { fs: 10.5, fill: '#c8a86a' });
+  o += L(x0, Y(TTC_NEARMISS), x1, Y(TTC_NEARMISS), { c: '#7a2b30', d: '4 4' });
+  o += T(x0 + 4, Y(TTC_NEARMISS) + 12, 'near-miss 1.5 s', { fs: 10.5, fill: '#ff8f8f' });
+
+  /* Lines break rather than clip: a TTC above the cap means "no meaningful
+     time-to-collision here", which a flat plateau would misrepresent. */
+  const seg = (get, col, w, dash) => {
+    let d = '', pen = false;
+    TEMP.forEach((t, i) => {
+      const v = get(t);
+      if (v == null || v <= 0 || v > tcap) { pen = false; return; }
+      d += `${pen ? 'L' : 'M'}${X(tOf(i)).toFixed(1)},${Y(v).toFixed(1)}`;
+      pen = true;
+    });
+    return `<path d="${d}" fill="none" stroke="${col}" stroke-width="${w}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`;
+  };
+  o += seg(t => t.ttcSi, '#5aabff', 1.8, '5 4');
+  o += seg(t => t.ttc, '#ffb14a', 2.2, null);
+
+  /* the noise spike the two channels disagree about */
+  if (spikeIdx >= 0) {
+    const sx = X(tOf(spikeIdx)), sy = Y(TEMP[spikeIdx].ttc);
+    o += `<circle cx="${sx}" cy="${sy}" r="7" fill="none" stroke="#ff6b6b" stroke-width="1.4"/>`;
+    o += L(sx, sy - 9, sx, 40, { c: '#7a2b30', d: '2 3' });
+    o += T(sx + 6, 36, 'channels disagree', { fs: 10.5, fill: '#ff8f8f' });
+  }
+  /* the genuine minimum, which is what gets stored and what fires */
+  if (SUM.ttcIdx >= 0) {
+    const mx = X(tOf(SUM.ttcIdx)), my = Y(SUM.minTtc);
+    o += `<circle cx="${mx}" cy="${my}" r="4.5" fill="#ff6b6b"/>`;
+    o += T(mx - 8, my + 4, `min ${f2(SUM.minTtc)} s`, { anchor: 'end', fs: 10, fill: '#ff8f8f', weight: 600 });
+  }
+
+  o += L(X(tOf(idx)), y0, X(tOf(idx)), y1, { c: '#e8eaed', w: 1, d: '2 3' });
+  o += T(x0 + 4, y0 + 2, 'metric', { fs: 10, fill: '#ffb14a', weight: 600 });
+  o += T(x0 + 48, y0 + 2, 'scale-invariant', { fs: 10, fill: '#5aabff', weight: 600 });
+  for (let t = 0; t <= tmax; t += 1) o += T(X(t), y1 + 17, `${t}s`, { anchor: 'middle', fs: 10, fill: '#5c6068' });
+  $('#svgTtc').innerHTML = o;
+}
+
+function drawStage4() {
+  const s = SER[idx], t = TEMP[idx], e = s.e;
+  const G = rigGeom(RIGS.hatch);
+  const ttc = t.ttc, sev = ttc == null ? 'ok' : ttc < TTC_NEARMISS ? 'red' : ttc < TTC_CAUTION ? 'amber' : 'ok';
+
+  frameSVG($('#svgFrame2'),
+    { x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2, cls: TRACK_META.cls, clipped: false },
+    { bonnetRow: G.edgeRow, thick: sev === 'red',
+      /* the ⚠ badge appears below TTC_CAUTION only — same rule as the v6 viewer */
+      label: `car #${TRACK_META.id}  ${f2(e.gap)} m` +
+             (ttc != null && ttc < TTC_CAUTION ? `  ⚠${f1(ttc)}s` : '') });
+
+  $('#oFrame').textContent = `${s.fi} · +${((s.fi - FI[0]) * DT).toFixed(2)}s`;
+  $('#cFrame').value = idx;
+
+  $('#reads').innerHTML = [
+    ['gap from bumper', `${f2(e.gap)}`, 'm', ''],
+    ['Z from lens', `${f2(e.z)}`, 'm', ''],
+    ['closing speed', t.v != null ? `${f1(t.v)}` : '—', t.v != null ? `m/s · ${(t.v * 3.6).toFixed(0)} km/h` : '', ''],
+    ['TTC metric', ttc != null ? `${f2(ttc)}` : '—', 's', sev === 'red' ? 'red' : sev === 'amber' ? 'amber' : ''],
+    ['TTC scale-free', t.ttcSi != null ? `${f2(t.ttcSi)}` : '—', 's · no calibration', ''],
+    ['confidence', `${f2(e.conf)}`, `both routes, agreement ${e.agree != null ? f2(e.agree) : '—'}`, '']
+  ].map(([k, v, sub, cls]) => {
+    const col = cls === 'red' ? 'var(--red)' : cls === 'amber' ? 'var(--amber)' : 'var(--ink)';
+    return `<div class="read"><div class="k">${k}</div>` +
+           `<div class="v" style="color:${col}">${v}</div><div class="s">${sub}</div></div>`;
+  }).join('');
+
+  drawChart(); drawTtc();
+
+  /* what the pipeline stores for this track, regardless of where the playhead is */
+  $('#sums').innerHTML = [
+    ['min_gap_m', f2(SUM.minGap), 'closest the bumper ever got'],
+    ['min_ttc_s', SUM.minTtc != null ? f2(SUM.minTtc) : '—', 'metric channel'],
+    ['min_ttc_si_s', SUM.minSi != null ? f2(SUM.minSi) : '—', 'scale-free channel'],
+    ['ttc_frame', SUM.ttcFrame ?? '—', 'where it happened']
+  ].map(([k, v, sub]) =>
+    `<div class="read"><div class="k" style="font-family:ui-monospace,Consolas,monospace;text-transform:none">${k}</div>` +
+    `<div class="v">${v}</div><div class="s">${sub}</div></div>`).join('');
+
+  /* the nudge — same rule as the viewer's near-miss banner */
+  const live = bannerOn(idx);
+  const ev = SUM.ttcIdx >= 0 ? { s: SER[SUM.ttcIdx], t: TEMP[SUM.ttcIdx] } : null;
+  $('#nudge').classList.toggle('live', live);
+  $('#nudgeBadge').textContent = live ? `near-miss · TTC ${f2(SUM.minTtc)} s` : 'armed';
+  $('#nudgeBadge').className = live ? 'badge red' : 'badge amber';
+  $('#nudgeSay').textContent = live && ev
+    ? `You closed to ${f1(ev.s.e.gap)} metres of the car ahead while still gaining about ` +
+      `${(ev.t.v * 3.6).toFixed(0)} km/h on it — barely a second of room. Ease off earlier and let the ` +
+      `gap open to two or three seconds before you settle back in.`
+    : 'Waiting for evidence — a nudge needs a distance, a direction of travel, and a time.';
+  $('#nudgeMeta').innerHTML = live && ev
+    ? `frame <b style="color:#b9bfc7">${ev.s.fi}</b> · gap <b style="color:#b9bfc7">${f2(ev.s.e.gap)} m</b> · ` +
+      `closing <b style="color:#b9bfc7">${f1(ev.t.v)} m/s</b> · metric TTC ` +
+      `<b style="color:#b9bfc7">${f2(ev.t.ttc)} s</b> · scale-free cross-check ` +
+      `<b style="color:#b9bfc7">${ev.t.ttcSi != null ? f2(ev.t.ttcSi) + ' s' : '—'}</b> · confidence ` +
+      `<b style="color:#b9bfc7">${f2(ev.s.e.conf)}</b> — those numbers are the whole prompt. The coaching ` +
+      `layer turns them into a sentence; Sarvam TTS speaks it.`
+    : `armed on the track summary, not on any single frame: fires while the playhead is within ` +
+      `${TTC_FRAME_WIN} frames of <code>ttc_frame</code> and <code>min_ttc_s</code> &lt; ${TTC_NEARMISS} s.`;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Wiring
+   ══════════════════════════════════════════════════════════════════════════ */
+$('#rigSeg').addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-rig]');
+  if (!b) return;
+  rigKey = b.dataset.rig;
+  [...$('#rigSeg').children].forEach(c => c.setAttribute('aria-pressed', String(c === b)));
+  drawSide(); drawPlan();
+});
+
+['#cGap', '#cLat', '#cCls', '#cW', '#cPitch', '#cConf'].forEach(sel =>
+  $(sel).addEventListener('input', drawStage3));
+
+$('#cFrame').addEventListener('input', e => { idx = +e.target.value; drawStage4(); });
+$('#btnRestart').addEventListener('click', () => { idx = 0; drawStage4(); });
+$('#btnPlay').addEventListener('click', () => {
+  playing = !playing;
+  $('#btnPlay').textContent = playing ? '❚❚ Pause' : '▶ Play';
+  if (playing) { lastT = performance.now(); acc = 0; requestAnimationFrame(tick); }
+});
+function tick(now) {
+  if (!playing) return;
+  const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
+  acc += dt * TRACK_META.fps * (+$('#cSpeed').value);
+  while (acc >= 1) { acc -= 1; idx++; }
+  if (idx >= SER.length - 1) {
+    idx = SER.length - 1; playing = false; $('#btnPlay').textContent = '▶ Play';
+  }
+  drawStage4();
+  if (playing) requestAnimationFrame(tick);
+}
+
+/* The one-line argument for not firing on the first threshold crossing. */
+$('#s4note').innerHTML = spikeIdx >= 0
+  ? `<b>Look at the circled dip.</b> At frame ${SER[spikeIdx].fi} the metric channel briefly reads ` +
+    `${f2(TEMP[spikeIdx].ttc)} s — under the near-miss threshold — because the smoothed distance ` +
+    `momentarily looks like it is falling at ${f1(TEMP[spikeIdx].v)} m/s. The scale-free channel says ` +
+    `${f2(TEMP[spikeIdx].ttcSi)} s at the same instant: the box is not growing anywhere near fast enough ` +
+    `for that to be real. Firing on the first frame that crosses a line would have shouted at the driver ` +
+    `here. Taking the minimum over the whole track and cross-checking the two channels puts the alert ` +
+    `where it belongs — frame ${SUM.ttcFrame}, ${f2(SUM.minGap)} m, both channels agreeing.`
+  : `<b>Both channels agree throughout this track</b>, which is the easy case. Where they diverge, the ` +
+    `scale-free channel wins until the calibration benchmark is run.`;
+
+$('#cFrame').max = String(SER.length - 1);
+drawSide(); drawPlan(); drawStage3(); drawStage4();
+</script>
+</body>
+</html>
