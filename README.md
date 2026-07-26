@@ -8,6 +8,7 @@ Follow the above link for the LIVE DEMO. Note that the app is hosted on a "cheap
 
 The live demo has been tested on Windows 11 (Chrome) & Mac (Chrome & Safari)
 
+In case some videos/audios are not playing -- wait for sometime for the video to buffer. Watch the Youtube video below to understand the functionality
 
 [![Watch OmniSense Demo](https://img.youtube.com/vi/QDaKcqfJdfM/maxresdefault.jpg)](https://youtu.be/QDaKcqfJdfM)
 
