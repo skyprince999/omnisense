@@ -28,7 +28,7 @@ In case some videos/audios are not playing -- wait for sometime for the video to
 - [Development Notes](#development-notes)
 - [Links & References](#links--references)
 
-![OmniSense Logo](omnisense/assets/OMNI%20SENSE%20.png)
+![OmniSense Logo](assets/OMNI%20SENSE%20.png)
 
 ## Project Overview
 
@@ -216,7 +216,7 @@ python make_detections.py --all                  # Detect on all stitched videos
 python make_detections.py --all --render         # Also generate annotated preview MP4s
 ```
 
-![Detection Example](omnisense/assets/detection%20ONLY.png)
+![Detection Example](assets/detection%20ONLY.png)
 
 **Processing**:
 
@@ -424,7 +424,7 @@ python serve.py
 - `make_web_videos.py` validates frame parity before atomic replace
 - Dropped frames desynchronize overlays—idempotent re-runs are safer than partial fixes
 
-![Depth Estimation](omnisense/assets/depth%20estimation.png)
+![Depth Estimation](assets/depth%20estimation.png)
 
 ### File Naming
 
