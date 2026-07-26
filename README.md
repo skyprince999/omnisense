@@ -2,6 +2,15 @@
 
 A comprehensive driver behavior monitoring system that provides real-time video understanding and intelligent feedback for dashcam footage. OmniSense processes raw dashcam clips, extracts deep insights through computer vision and video indexing, and delivers contextual audio nudges to guide safer driving behavior.
 
+# [LIVE DEMO LINK](https://omnisense.thinkevolvelabs.com/)
+
+Follow the above link for the LIVE DEMO. Note that the app is hosted on a "cheap" infra so concurrency or cross-device may not work 😊
+
+The live demo has been tested on Windows 11 (Chrome) & Mac (Chrome & Safari)
+
+
+[![Watch OmniSense Demo](https://img.youtube.com/vi/QDaKcqfJdfM/maxresdefault.jpg)](https://youtu.be/QDaKcqfJdfM)
+
 ## Table of Contents
 
 - [Project Overview](#project-overview)
@@ -12,6 +21,11 @@ A comprehensive driver behavior monitoring system that provides real-time video 
 - [Setup & Environment](#setup--environment)
 - [Common Commands](#common-commands)
 - [Data Conventions](#data-conventions)
+- [VideoDB Integration](#videodb-integration)
+- [Development Notes](#development-notes)
+- [Links & References](#links--references)
+
+![OmniSense Logo](omnisense/assets/OMNI%20SENSE%20.png)
 
 ## Project Overview
 
@@ -199,6 +213,8 @@ python make_detections.py --all                  # Detect on all stitched videos
 python make_detections.py --all --render         # Also generate annotated preview MP4s
 ```
 
+![Detection Example](omnisense/assets/detection%20ONLY.png)
+
 **Processing**:
 
 1. Decode source via piped `ffmpeg` with frame-drop resilience
@@ -228,7 +244,7 @@ OmniSense delivers contextual audio nudges—brief, non-intrusive voice messages
 | **Lane Discipline** | Drifting between lanes | Maintain lane position |
 | **Hazard Awareness** | Pedestrian/cyclist in blind spot | Alert to presence |
 | **Intersection Safety** | Approaching intersection without slowing | Prepare to stop if needed |
-| **Fatigue Detection** | Erratic steering or slow reactions | Suggest break (if applicable) |
+
 
 ### Generation Pipeline
 
@@ -258,39 +274,6 @@ Detections + Depth + GPS/IMU Data
   + manifest.json (metadata & timing)
 ```
 
-### Nudge Manifest Format
-
-```json
-{
-  "stem": "Trip [2025-06-15 10:30-12:45]",
-  "nudges": [
-    {
-      "timestamp_ms": 45320,
-      "type": "following_distance",
-      "confidence": 0.87,
-      "frame": 1133,
-      "message": "Consider increasing your following distance",
-      "duration_ms": 3200,
-      "priority": "medium",
-      "context": {
-        "detected_vehicles": 2,
-        "ego_speed_kmh": 62,
-        "lead_vehicle_distance_m": 18
-      }
-    },
-    ...
-  ],
-  "summary": {
-    "total_nudges": 12,
-    "categories": {
-      "following_distance": 4,
-      "speed_advisory": 3,
-      "lane_discipline": 2,
-      "hazard_awareness": 3
-    }
-  }
-}
-```
 
 ### Playback
 
@@ -438,18 +421,7 @@ python serve.py
 - `make_web_videos.py` validates frame parity before atomic replace
 - Dropped frames desynchronize overlays—idempotent re-runs are safer than partial fixes
 
-### Temporal Smoothing
-
-**Depth Normalization**: Uses exponential moving average (EMA) on per-frame min/max bounds:
-
-```python
-EMA_ALPHA = 0.05  # Smoothing factor
-new_min = alpha * frame_min + (1 - alpha) * prev_min
-new_max = alpha * frame_max + (1 - alpha) * prev_max
-normalized_depth = (frame_depth - new_min) / (new_max - new_min)
-```
-
-This prevents strobing during camera pans or lighting changes.
+![Depth Estimation](omnisense/assets/depth%20estimation.png)
 
 ### File Naming
 
@@ -490,6 +462,34 @@ OmniSense leverages a curated subset of VideoDB's platform features for video in
 | **Sandbox Compute** | `conn.create_sandbox(tier=, models=[...])`, open-weight VLM inference | ✅ Used—Qwen3.5 for batch analysis, OmniVoice for TTS |
 | **Audio Generation** | `coll.generate_voice(text=, model_name=, sandbox_id=)` | ⚠️ Tried (OmniVoice TTS); production pipeline uses Sarvam AI instead |
 | **Usage Metering** | `conn.check_usage()` + `cost_metric` rate table | ✅ Core—enforce budget locks; cost tracking per operation |
+
+### Projected Project Costs
+
+**Estimated Total: ~$69.61** (Current usage: $49.61 + $20.00 projected)
+
+**Cost Breakdown by Service**:
+
+| Service | Units | Rate | Cost |
+|---------|-------|------|------|
+| Transcription | 2,165.00 | $0.01/unit | $21.65 |
+| Sandbox Medium Compute | 3.54 hrs | $3.50/hr | $12.39 |
+| LLM (Basic) | 6,250.24 | $0.0016/unit | $10.00 |
+| LLM (Pro) | 1,541.90 | $0.0065/unit | $10.02 |
+| LLM (Ultra) | 670.72 | $0.00875/unit | $5.87 |
+| Indexing Bundle (Basic) | 9.66 | $0.80/unit | $7.73 |
+| File Upload | 19.11 | $0.09/unit | $1.72 |
+| Streaming | 11.58 | $0.07/unit | $0.81 |
+| Media Storage | 15.82 | $0.03/unit | $0.47 |
+| Timeline Overlay | 22.26 | $0.01/unit | $0.22 |
+| Indexing Bundle (Pro) | 0.09 | $1.60/unit | $0.14 |
+| Sandbox Small Compute | 0.14 hrs | $1.00/hr | $0.14 |
+| Spoken Index | 6.48 | $0.02/unit | $0.13 |
+| Search Queries | 85.00 | $0.0015/unit | $0.13 |
+| **Other Services** | — | — | $0.02 |
+| **Current Total Used** | — | — | **$49.61** |
+| **Projected with Buffer** | — | — | **$69.61** |
+
+**Cost Drivers**: Transcription (43.7%), Sandbox compute (24.9%), LLM inference (41.1% combined)
 
 ### Key Workflows
 
@@ -620,9 +620,9 @@ Several VideoDB capabilities are available but not adopted in this project:
 ## Links & References
 
 - **VideoDB Docs**: See `videodb_docs/` folder (scraped from docs.videodb.io); **note: Sandbox Compute postdates this scrape**—see `sandbox_experiments.md` for up-to-date Sandbox docs
-- **Features Inventory**: `VIDEODB_FEATURES_USED.md` — complete usage table, status, gotchas, and workarounds
-- **Sample Code**: `Sample Code.ipynb` — runnable VideoDB SDK snippets (upload, index, search, `results.play()`)
-- **Sandbox Details**: `sandbox_experiments.md`, `SANDBOX_BUG_REPORT.md` (scene.describe sandbox routing bug + workaround)
-- **Cost Tracking**: `videodb_cost.py` — measure per-operation expenses; design notes in script
-- **Architecture Details**: `DEPTH_VIEWER_PLAN.md`, `SESSION_NOTES.md`
-- **Distance Benchmark**: `dashcam_distance_benchmark.md` — calibration notes for depth accuracy
+- **Features Inventory**: `session_memory/VIDEODB_FEATURES_USED.md` — complete usage table, status, gotchas, and workarounds
+- **Sample Code**: `session_memory/Sample Code.ipynb` — runnable VideoDB SDK snippets (upload, index, search, `results.play()`)
+- **Sandbox Details**: `session_memory/sandbox_experiments.md`, `SANDBOX_BUG_REPORT.md` (scene.describe sandbox routing bug + workaround)
+- **Cost Tracking**: `session_memory/videodb_cost.py` — measure per-operation expenses; design notes in script
+- **Architecture Details**: `session_memory/DEPTH_VIEWER_PLAN.md`, `SESSION_NOTES.md`
+- **Distance Benchmark**: `session_memory/dashcam_distance_benchmark.md` — calibration notes for depth accuracy
