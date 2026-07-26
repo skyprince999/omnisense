@@ -1,4 +1,4 @@
-# OmniSense
+# OmniSense CoPilot
 
 A comprehensive driver behavior monitoring system that provides real-time video understanding and intelligent feedback for dashcam footage. OmniSense processes raw dashcam clips, extracts deep insights through computer vision and video indexing, and delivers contextual audio nudges to guide safer driving behavior.
 
