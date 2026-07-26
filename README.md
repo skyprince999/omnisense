@@ -213,25 +213,6 @@ python make_detections.py --all --render         # Also generate annotated previ
 
 **Frame-Perfect Indexing**: Detections reference frame numbers directly. A dropped frame desynchronizes overlays, so `make_web_videos.py` validates frame parity before atomic replace.
 
-### VideoDB Integration
-
-**Tool**: `upload_stitched.py` / `stitch_and_upload.py`  
-**Purpose**: Upload stitched videos to VideoDB, enable natural-language scene search
-
-```bash
-python stitch_and_upload.py               # Stitch + upload + scene-index
-python check_and_upload.py --dry-run      # Diff local stitched/ vs VideoDB
-python check_and_upload.py                # Upload missing videos (VideoDB is source of truth)
-python upload_stitched.py --index-only    # Retry scene indexing on already-uploaded videos
-```
-
-**Scene Indexing**: VideoDB indexes video scenes via natural language embeddings, enabling queries like:
-- *"Show me scenes with heavy traffic"*
-- *"Incidents with pedestrians near the vehicle"*
-- *"Sudden braking events"*
-
-Currently disabled by default (`--index` flag required) due to server-side indexing issues; use `--index-only` to retry.
-
 ## Audio Feedback System
 
 ### Purpose
