@@ -127,6 +127,8 @@ omnisense/
     └── serve.py                       # Local dev server (Range support)
 ```
 
+** _Total raw data in this project is >15GB_**
+
 ### Key Abstraction: The Stem
 
 The **`<stem>`** (stitched filename without extension) is the join key across every pipeline stage:
