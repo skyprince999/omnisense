@@ -209,8 +209,8 @@ python make_depth_video.py "<file>.mp4" --model base   # Single file with base m
 ### Object Detection
 
 **Tool**: `make_detections.py`  
-**Model**: YOLOv8 (real-time object detection)  
-**Classes Tracked**: Person + road vehicles (car, bus, truck, motorcycle)  
+**Model**: YOLOv26 (real-time object detection)  
+**Classes Tracked**: Person + road vehicles (car, bus, truck, motorcycle)  + stray animals (dogs, cats, cow, goats etc.)
 **Output**: Normalized bounding boxes, frame-indexed
 
 ```bash
